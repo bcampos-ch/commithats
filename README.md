@@ -177,3 +177,9 @@ The core never writes a sentence. It reports what happened as a code with its va
 3. Allow it as a setting in `src/core/settings.js`. Add it to `languageForLocale` there too, if the app should start in it on a system set to that language.
 
 `npm test` fails until the three agree and the new dictionary says everything the English one does.
+
+## License
+
+Commit Hats is open source under the [Apache License 2.0](LICENSE). Copyright 2026 Nacho Chiappero. See [NOTICE](NOTICE).
+
+Electron and Chromium, which the installed app runs on, keep their own licenses. The installer puts them next to the program.

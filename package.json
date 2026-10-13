@@ -2,6 +2,7 @@
   "name": "commithats",
   "version": "0.1.0",
   "description": "Pick which GitHub account your local git projects commit and push as.",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "main": "src/main/main.js",
@@ -27,7 +28,9 @@
     },
     "files": [
       "src/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "NOTICE"
     ],
     "publish": null,
     "win": {
