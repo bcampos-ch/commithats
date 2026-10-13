@@ -1,0 +1,19 @@
+{
+  "name": "git-account-switcher",
+  "version": "0.1.0",
+  "description": "Pick which GitHub account each local git project uses, without changing your global git config.",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "smoke": "electron scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0"
+  }
+}
