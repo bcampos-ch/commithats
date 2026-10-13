@@ -7,135 +7,216 @@
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Git Account Switcher</title>
+    <title>Commit Hats</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
+  <!--
+    Texts are not written here. An element marked with `data-i18n` (or `data-i18n-title`,
+    `data-i18n-placeholder`, `data-i18n-aria-label`) gets its text from the dictionary of the
+    language in use, as soon as the script runs. See i18n.js.
+  -->
   <body>
     <header class="topbar">
       <div class="brand">
-        <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
-          <rect width="24" height="24" rx="6" />
-          <path d="M7 9h9M13.5 6.5 16 9l-2.5 2.5M17 15H8M10.5 12.5 8 15l2.5 2.5" />
-        </svg>
-        <h1 class="brand__name">Git Account Switcher</h1>
+        <img class="brand__mark" src="../assets/icon.png" alt="" />
+        <h1 class="brand__name">Commit Hats</h1>
       </div>
       <div class="topbar__meta">
         <div id="environment" class="environment"></div>
-        <button id="refresh" class="button button--quiet" type="button">Refresh</button>
+        <nav class="topbar__actions" data-tour="toolbar" data-i18n-aria-label="toolbar.label">
+          <button
+            id="open-guide"
+            class="button button--quiet"
+            type="button"
+            data-i18n="toolbar.guide"
+            data-i18n-title="toolbar.guide.hint"
+          ></button>
+          <button
+            id="open-info"
+            class="button button--quiet"
+            type="button"
+            data-i18n="toolbar.info"
+            data-i18n-title="toolbar.info.hint"
+          ></button>
+          <button
+            id="open-settings"
+            class="button button--quiet"
+            type="button"
+            data-i18n="toolbar.settings"
+            data-i18n-title="toolbar.settings.hint"
+          ></button>
+          <button
+            id="refresh"
+            class="button button--quiet"
+            type="button"
+            data-i18n="toolbar.refresh"
+            data-i18n-title="toolbar.refresh.hint"
+          ></button>
+        </nav>
       </div>
     </header>
 
     <div class="layout">
-      <aside class="panel" aria-labelledby="accounts-heading">
+      <aside class="panel" aria-labelledby="accounts-heading" data-tour="accounts">
         <div class="panel__head">
-          <h2 id="accounts-heading">Accounts</h2>
-          <button id="add-account" class="button" type="button">Add account</button>
+          <h2 id="accounts-heading" data-i18n="accounts.title"></h2>
+          <button id="add-account" class="button button--primary" type="button" data-i18n="accounts.add"></button>
         </div>
         <div id="accounts" class="panel__body"></div>
       </aside>
 
-      <main class="panel" aria-labelledby="projects-heading">
+      <main class="panel" aria-labelledby="projects-heading" data-tour="projects">
         <div class="panel__head">
-          <h2 id="projects-heading">Projects</h2>
-          <button id="add-project" class="button" type="button">Add project</button>
+          <h2 id="projects-heading" data-i18n="projects.title"></h2>
+          <button id="add-project" class="button button--primary" type="button" data-i18n="projects.add"></button>
         </div>
         <div id="projects" class="panel__body"></div>
-        <section id="detail" class="detail" aria-live="polite"></section>
+        <section id="detail" class="detail" aria-live="polite" data-tour="detail"></section>
       </main>
     </div>
 
     <dialog id="account-dialog" class="dialog" aria-labelledby="account-dialog-title">
       <form id="account-form" novalidate>
-        <h2 id="account-dialog-title">Add account</h2>
-        <p class="dialog__intro">
-          An account is who git commits and pushes as. Passwords and tokens stay in your credential manager.
-        </p>
+        <h2 id="account-dialog-title"></h2>
+        <p class="dialog__intro" data-i18n="accountDialog.intro"></p>
 
         <div class="field-pair">
           <label class="field">
-            <span class="field__label">Label</span>
-            <input name="label" type="text" autocomplete="off" placeholder="Work" maxlength="40" />
+            <span class="field__label" data-i18n="accountDialog.label"></span>
+            <input
+              name="label"
+              type="text"
+              autocomplete="off"
+              maxlength="40"
+              data-i18n-placeholder="accountDialog.label.placeholder"
+            />
             <span class="field__error" data-error-for="label"></span>
           </label>
 
           <label class="field">
-            <span class="field__label">GitHub username</span>
+            <span class="field__label" data-i18n="accountDialog.githubUser"></span>
             <input name="githubUser" type="text" autocomplete="off" placeholder="ada-work" />
-            <span class="field__hint">The user you push as on github.com.</span>
+            <span class="field__hint" data-i18n="accountDialog.githubUser.hint"></span>
             <span class="field__error" data-error-for="githubUser"></span>
           </label>
         </div>
 
         <div class="field-pair">
           <label class="field">
-            <span class="field__label">Name on commits</span>
+            <span class="field__label" data-i18n="accountDialog.gitName"></span>
             <input name="gitName" type="text" autocomplete="off" placeholder="Ada Lovelace" />
             <span class="field__error" data-error-for="gitName"></span>
           </label>
 
           <label class="field">
-            <span class="field__label">Email on commits</span>
+            <span class="field__label" data-i18n="accountDialog.gitEmail"></span>
             <input name="gitEmail" type="email" autocomplete="off" placeholder="ada@company.com" />
             <span class="field__error" data-error-for="gitEmail"></span>
           </label>
         </div>
 
         <div class="field">
-          <label class="field__label" for="ssh-key-path">SSH private key (optional)</label>
+          <label class="field__label" for="ssh-key-path" data-i18n="accountDialog.sshKey"></label>
           <div class="field__row">
-            <input id="ssh-key-path" name="sshKeyPath" type="text" readonly placeholder="No key selected" />
-            <button id="pick-ssh-key" class="button" type="button">Choose file</button>
-            <button id="generate-ssh-key" class="button" type="button">Generate</button>
-            <button id="clear-ssh-key" class="button button--quiet" type="button">Clear</button>
+            <input
+              id="ssh-key-path"
+              name="sshKeyPath"
+              type="text"
+              readonly
+              data-i18n-placeholder="accountDialog.sshKey.placeholder"
+            />
+            <button id="pick-ssh-key" class="button" type="button" data-i18n="accountDialog.sshKey.choose"></button>
+            <button
+              id="generate-ssh-key"
+              class="button"
+              type="button"
+              data-i18n="accountDialog.sshKey.generate"
+            ></button>
+            <button
+              id="clear-ssh-key"
+              class="button button--quiet"
+              type="button"
+              data-i18n="accountDialog.sshKey.clear"
+            ></button>
           </div>
-          <span class="field__hint">Only needed for projects whose remote uses SSH.</span>
+          <span class="field__hint" data-i18n="accountDialog.sshKey.hint"></span>
           <span class="field__error" data-error-for="sshKeyPath"></span>
         </div>
 
         <div id="public-key" class="field" hidden>
-          <label class="field__label" for="public-key-text">Public key</label>
+          <label class="field__label" for="public-key-text" data-i18n="accountDialog.publicKey"></label>
           <div class="field__row">
             <input id="public-key-text" class="field__mono" type="text" readonly />
-            <button id="copy-public-key" class="button" type="button">Copy</button>
+            <button id="copy-public-key" class="button" type="button" data-i18n="common.copy"></button>
           </div>
-          <span class="field__hint">
-            Add it to this account on github.com, under Settings, SSH and GPG keys, New SSH key.
-          </span>
+          <span class="field__hint" data-i18n="accountDialog.publicKey.hint"></span>
           <span id="public-key-note" class="field__note" role="status"></span>
         </div>
 
         <div class="dialog__actions">
-          <button id="cancel-account" class="button button--quiet" type="button">Cancel</button>
-          <button class="button button--primary" type="submit">Save account</button>
+          <button id="cancel-account" class="button button--quiet" type="button" data-i18n="common.cancel"></button>
+          <button class="button button--primary" type="submit" data-i18n="accountDialog.save"></button>
         </div>
       </form>
     </dialog>
 
     <dialog id="owner-dialog" class="dialog" aria-labelledby="owner-dialog-title">
       <form id="owner-form" novalidate>
-        <h2 id="owner-dialog-title">Add owner rule</h2>
+        <h2 id="owner-dialog-title" data-i18n="ownerDialog.title"></h2>
         <p id="owner-dialog-intro" class="dialog__intro"></p>
 
         <label class="field">
-          <span class="field__label">GitHub user or organization</span>
+          <span class="field__label" data-i18n="ownerDialog.owner"></span>
           <input name="owner" type="text" autocomplete="off" placeholder="acme" />
-          <span class="field__hint">You can also paste the URL of one of its repositories.</span>
+          <span class="field__hint" data-i18n="ownerDialog.owner.hint"></span>
           <span class="field__error" data-error-for="owner"></span>
         </label>
 
-        <p class="dialog__note">
-          This adds a rule to your global git config. Your global name and email stay as they are, and a project with
-          its own account keeps it.
-        </p>
+        <p class="dialog__note" data-i18n="ownerDialog.note"></p>
 
         <div class="dialog__actions">
-          <button id="cancel-owner" class="button button--quiet" type="button">Cancel</button>
-          <button class="button button--primary" type="submit">Add rule</button>
+          <button id="cancel-owner" class="button button--quiet" type="button" data-i18n="common.cancel"></button>
+          <button class="button button--primary" type="submit" data-i18n="rule.add"></button>
         </div>
       </form>
     </dialog>
 
+    <dialog id="settings-dialog" class="dialog dialog--narrow" aria-labelledby="settings-dialog-title">
+      <h2 id="settings-dialog-title" data-i18n="toolbar.settings"></h2>
+      <p class="dialog__intro" data-i18n="settings.intro"></p>
+      <div id="settings-body"></div>
+      <div class="dialog__actions">
+        <button id="close-settings" class="button button--primary" type="button" data-i18n="common.done"></button>
+      </div>
+    </dialog>
+
+    <dialog id="info-dialog" class="dialog dialog--narrow" aria-labelledby="info-dialog-title">
+      <h2 id="info-dialog-title" data-i18n="info.title"></h2>
+      <div id="info-body" class="dialog__body"></div>
+      <div class="dialog__actions">
+        <span id="info-note" class="field__note dialog__status" role="status"></span>
+        <button id="copy-info" class="button" type="button" data-i18n="info.copy"></button>
+        <button id="close-info" class="button button--primary" type="button" data-i18n="common.close"></button>
+      </div>
+    </dialog>
+
+    <dialog
+      id="confirm-dialog"
+      class="dialog dialog--narrow"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-question confirm-detail"
+    >
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-question" class="dialog__question"></p>
+      <p id="confirm-detail" class="dialog__detail"></p>
+      <div class="dialog__actions">
+        <button id="confirm-cancel" class="button button--quiet" type="button" data-i18n="common.cancel"></button>
+        <button id="confirm-accept" class="button button--primary" type="button"></button>
+      </div>
+    </dialog>
+
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+    <p id="announcer" class="visually-hidden" aria-live="polite"></p>
 
     <script type="module" src="app.js"></script>
   </body>

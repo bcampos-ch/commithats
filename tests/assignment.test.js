@@ -123,8 +123,7 @@ describe('collectWarnings', () => {
 
     const warnings = collectWarnings(project, work, { signedInAccounts: ['ada-personal'] });
 
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /not signed in as "ada-work"/);
+    assert.deepEqual(warnings, [{ code: 'warning.notSignedIn', params: { user: 'ada-work' } }]);
   });
 
   it('compares signed-in accounts without regard to case', () => {
@@ -144,8 +143,7 @@ describe('collectWarnings', () => {
 
     const warnings = collectWarnings(project, work, { signedInAccounts: ['ada-work'] });
 
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /pinned to the user "ada-personal"/);
+    assert.deepEqual(warnings, [{ code: 'warning.pinnedUser', params: { remote: 'origin', user: 'ada-personal' } }]);
   });
 
   it('warns when the remote URL carries a credential', () => {
@@ -153,9 +151,8 @@ describe('collectWarnings', () => {
 
     const warnings = collectWarnings(project, work, { signedInAccounts: ['ada-work'] });
 
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /credential embedded/);
-    assert.doesNotMatch(warnings[0], /s3cr3t/);
+    assert.deepEqual(warnings, [{ code: 'warning.embeddedCredential', params: { remote: 'origin' } }]);
+    assert.doesNotMatch(JSON.stringify(warnings), /s3cr3t/);
   });
 
   it('warns when the remote uses SSH and the account has no key', () => {
@@ -163,8 +160,7 @@ describe('collectWarnings', () => {
 
     const warnings = collectWarnings(project, work, { signedInAccounts: ['ada-work'] });
 
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /uses SSH/);
+    assert.deepEqual(warnings, [{ code: 'warning.sshNoKey', params: { remote: 'origin' } }]);
   });
 
   it('accepts an SSH remote when the account has a key', () => {
@@ -179,7 +175,6 @@ describe('collectWarnings', () => {
 
     const warnings = collectWarnings(project, work, { signedInAccounts: ['ada-work'] });
 
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /not on github\.com/);
+    assert.deepEqual(warnings, [{ code: 'warning.notGithub', params: { remote: 'origin' } }]);
   });
 });

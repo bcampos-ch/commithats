@@ -1,17 +1,27 @@
-# Git Account Switcher
+<img src="src/assets/icon.png" width="96" alt="" />
 
-Pick which GitHub account your local projects commit and push as: one project at a time, a whole folder at once, or by who owns the remote. Your global name, email, and credentials never change, and nothing has to keep running in the background.
+# Commit Hats
+
+**The right GitHub account for every commit.**
+
+Commit Hats for Git picks which account your local projects commit and push as: one project at a time, a whole folder at once, or by who owns the remote. Your global name, email, and credentials never change, and nothing has to keep running in the background.
 
 ![The app with two accounts, their rules, and five projects](docs/screenshot.png)
 
-## Quick start
+## Install
+
+Download the installer from this repository's Releases page and run it. It installs for your user only, without administrator rights, and adds a Start menu shortcut. You need Git on your computer.
+
+The installer is not code-signed yet, so Windows SmartScreen warns about it. [SECURITY.md](SECURITY.md) says what the app reads, writes, and runs, and how to check your download.
+
+To run it from the source instead:
 
 ```bash
 npm install
 npm start
 ```
 
-Then, in the window:
+## First steps
 
 1. **Add account**: the name and email for your commits, and the GitHub username you push with.
 2. Give the account a way to authenticate:
@@ -24,11 +34,24 @@ Then, in the window:
 
 From then on, every `git commit`, `git push`, and `git clone` in those places uses that account, from any terminal or editor. You can close the app.
 
+### Around the app
+
+| Button | What it does |
+|--------|--------------|
+| **Guide** | Walks you through the app, one area at a time. It opens by itself the first time. |
+| **Info** | Shows the versions of the app, Git, Git Credential Manager, and Electron, and where your data is kept. **Copy versions** copies them for a bug report, without any path of your computer. |
+| **Settings** | Language (English or Spanish) and theme (same as the system, light, or dark). The app starts in Spanish on a system set to Spanish, and in English otherwise. |
+| **Refresh** | Reads git again, for when you changed something outside the app. |
+
+An account that is signed in to Git Credential Manager shows a green **Signed in** mark.
+
+To put the projects in another order, drag one by the dots on its left, or move the focus to the dots and press the up or down arrow. The order only changes what the app shows.
+
 ### Requirements
 
 | Tool | Version | Needed for |
 |------|---------|------------|
-| Node.js | 20 or newer | Installing and running the app |
+| Node.js | 20 or newer | Running from source and building. The installed app does not need it. |
 | Git | 2.36 or newer | Reading and writing config. Owner rules need 2.36. |
 | Git Credential Manager | Tested with 2.2.1 | Signing in to several accounts over HTTPS. It ships with Git for Windows. |
 | OpenSSH client (`ssh-keygen`) | Any | Generating keys from the app. It ships with Windows 10 and 11. |
@@ -91,7 +114,7 @@ ssh-keygen -p -f ~/.ssh/id_ed25519_work
 - Passwords and tokens. They stay in your credential manager.
 - Remotes, branches, and commits.
 
-The app keeps its own data in `%APPDATA%\git-account-switcher` on Windows: `state.json` (account labels, names, emails, usernames, SSH key paths, and the list of project folders) and `accounts/` (the settings files that rules include).
+The app keeps its own data in `%APPDATA%\git-account-switcher` on Windows: `state.json` (account labels, names, emails, usernames, SSH key paths, the list of project folders in the order you gave them, and your settings) and `accounts/` (the settings files that rules include). The folder carries the app's first name and stays there, because the rules in your git config point into it.
 
 ## When git would ignore the account
 
@@ -131,15 +154,26 @@ Run these inside a repository that should use the account.
 | Command | What it does |
 |---------|--------------|
 | `npm test` | Unit and integration tests. They run the real git and ssh-keygen in a sandbox with its own "global" config. |
-| `npm run smoke` | Boots the app against throwaway repositories, drives the page, checks the result with git, and saves screenshots to `.smoke/`. |
-| `npm start` | Runs the app. Set `GIT_ACCOUNT_SWITCHER_DATA_DIR` to try it with a separate data folder. |
+| `npm run smoke` | Boots the app against throwaway repositories, drives the page with real key presses and a real drag, checks the result with git, and saves screenshots to `.smoke/`. It then opens the app a second time to check that the language, the theme, and the order of the projects were kept. |
+| `npm start` | Runs the app. Set `COMMITHATS_DATA_DIR` to try it with a separate data folder. |
+| `npm run dist` | Builds the Windows installer into `dist/`, with its checksum in `dist/SHA256SUMS.txt`. |
+| `npm run noise` | Rebuilds the grain tiles in `src/assets/`. The output is deterministic. |
 
 ```text
 src/
-  core/        The rules, with no Electron: accounts, assignments, rules, use cases
+  core/        The rules, with no Electron: accounts, assignments, rules, settings, use cases
   adapters/    Git, ssh-keygen, the file system, and JSON storage
+  i18n/        Everything the app says, in English and Spanish
   main/        Electron main process: window, IPC, preload
   renderer/    The page: views (presentational) and app (container)
-tests/         Tests for core and adapters
+tests/         Tests for core, adapters, and the dictionaries
 scripts/       The end-to-end smoke run
 ```
+
+The core never writes a sentence. It reports what happened as a code with its values, such as `{ code: 'folder.taken', params: { folder, account } }`, and the page says it in the language you chose. To add a language:
+
+1. Write its dictionary in `src/i18n/`, with the same codes as `en.js`.
+2. Register it, with its name, in `src/i18n/translator.js`.
+3. Allow it as a setting in `src/core/settings.js`. Add it to `languageForLocale` there too, if the app should start in it on a system set to that language.
+
+`npm test` fails until the three agree and the new dictionary says everything the English one does.

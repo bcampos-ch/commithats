@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { ProjectError, normalizeKey, readConfig, removeLocalSection, setLocal, unsetLocal } from './git-config.js';
+import { message } from './messages.js';
 import { parseRemoteUrl } from './remotes.js';
 import { sshCommandFor } from './ssh-command.js';
 
@@ -98,7 +99,13 @@ export async function clearAccount(git, projectPath) {
 
 async function requireLocalConfig(git, projectPath) {
   const local = await readConfig(git, projectPath, { localOnly: true });
-  if (local === null) throw new ProjectError('NOT_A_REPOSITORY', "This folder isn't a git repository anymore.");
+  if (local === null) {
+    throw new ProjectError(
+      'NOT_A_REPOSITORY',
+      "This folder isn't a git repository anymore.",
+      message('project.noLongerRepository'),
+    );
+  }
   return local;
 }
 

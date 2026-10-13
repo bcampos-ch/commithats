@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { createFiles } from '../src/adapters/files.js';
@@ -27,18 +28,28 @@ async function setup(
   {
     signedIn = ['ada-work'],
     gcmAvailable = true,
+    // What the stand-in credential manager does with a sign-in: the browser signs in as
+    // the requested user ('requested'), as someone else ('someone-else'), or the person gives up.
+    signInOutcome = 'requested',
     existingFiles = [],
     keygenResult = { ok: true },
     platform = 'linux',
+    defaultLanguage = 'en',
   } = {},
 ) {
   const sandbox = await createSandbox(t);
   const signIns = [];
   const gcm = {
-    getStatus: async () => ({ available: gcmAvailable, accounts: gcmAvailable ? [...signedIn] : [] }),
+    getStatus: async () => ({
+      available: gcmAvailable,
+      accounts: gcmAvailable ? [...signedIn] : [],
+      version: gcmAvailable ? '2.6.1' : null,
+    }),
     signIn: async (username) => {
       signIns.push(username);
-      signedIn.push(username);
+      if (signInOutcome === 'gave-up') return { ok: false, detail: null };
+      if (signInOutcome === 'failed') return { ok: false, detail: 'fatal: User cancelled dialog.' };
+      signedIn.push(signInOutcome === 'someone-else' ? 'someone-else' : username);
       return { ok: true };
     },
   };
@@ -68,6 +79,7 @@ async function setup(
       sshDir,
       platform,
       homeDir: sandbox.root,
+      defaultLanguage,
     });
   return { sandbox, service: createService(), createService, signIns, keyRequests, sshDir, store, existingFiles };
 }
@@ -114,9 +126,7 @@ describe('projects', () => {
     const result = await service.addProjects([folder]);
 
     assert.equal(result.snapshot.projects.length, 0);
-    assert.equal(result.notices.length, 1);
-    assert.match(result.notices[0], /"notes" isn't a git repository/);
-    assert.match(result.notices[0], /"Add folder"/, 'it points to the way to cover a folder of future clones');
+    assert.deepEqual(result.notices, [{ code: 'project.notRepository', params: { name: 'notes' } }]);
   });
 
   it('does not track the same project twice', async (t) => {
@@ -127,7 +137,7 @@ describe('projects', () => {
     const result = await service.addProjects([repo]);
 
     assert.equal(result.snapshot.projects.length, 1);
-    assert.match(result.notices[0], /already in the list/);
+    assert.deepEqual(result.notices, [{ code: 'project.alreadyListed', params: { name: 'api' } }]);
   });
 
   it('stops tracking a project without changing its git config', async (t) => {
@@ -194,7 +204,7 @@ describe('assigning accounts', () => {
 
     const result = await service.assignProject(path.resolve(repo), work.id);
 
-    assert.equal(result.ok, false);
+    assert.deepEqual(result, { ok: false, error: { code: 'project.untracked' } });
     assert.equal(await sandbox.getLocal(repo, 'user.email'), null);
   });
 
@@ -205,7 +215,34 @@ describe('assigning accounts', () => {
 
     const result = await service.assignProject(path.resolve(repo), 'missing-account');
 
+    assert.deepEqual(result, { ok: false, error: { code: 'account.missing' } });
+  });
+
+  it('says so when the folder of a project stopped being a repository', async (t) => {
+    const { sandbox, service } = await setup(t);
+    const repo = await sandbox.initRepo('api');
+    const work = await addAccount(service, workDraft);
+    await service.addProjects([repo]);
+    await rm(path.join(repo, '.git'), { recursive: true, force: true });
+
+    const result = await service.assignProject(path.resolve(repo), work.id);
+
+    assert.deepEqual(result, { ok: false, error: { code: 'project.noLongerRepository' } });
+  });
+
+  it('passes on what git said when git refuses to write', async (t) => {
+    const { sandbox, service } = await setup(t);
+    const repo = await sandbox.initRepo('api');
+    const work = await addAccount(service, workDraft);
+    await service.addProjects([repo]);
+    // A lock file left behind is how git says someone else is writing the config.
+    await writeFile(path.join(repo, '.git', 'config.lock'), '');
+
+    const result = await service.assignProject(path.resolve(repo), work.id);
+
     assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'git.failed');
+    assert.match(result.error.params.detail, /config/);
   });
 
   it('warns about what would make git ignore the assignment', async (t) => {
@@ -217,8 +254,99 @@ describe('assigning accounts', () => {
 
     const result = await service.assignProject(path.resolve(repo), work.id);
 
-    assert.equal(result.snapshot.projects[0].warnings.length, 1);
-    assert.match(result.snapshot.projects[0].warnings[0], /not signed in as "ada-work"/);
+    assert.deepEqual(result.snapshot.projects[0].warnings, [{ code: 'warning.notSignedIn', params: { user: 'ada-work' } }]);
+  });
+
+  it('flags a project whose config was edited behind its back, before any other warning', async (t) => {
+    const { sandbox, service } = await setup(t, { signedIn: [] });
+    const repo = await sandbox.initRepo('api');
+    await sandbox.setLocal(repo, 'remote.origin.url', 'https://github.com/acme/api.git');
+    const work = await addAccount(service, workDraft);
+    await service.addProjects([repo]);
+    await service.assignProject(path.resolve(repo), work.id);
+    await sandbox.setLocal(repo, 'user.email', 'someone-else@example.com');
+
+    const [project] = (await service.getSnapshot()).projects;
+
+    assert.deepEqual(project.assignment, { kind: 'drifted', accountId: work.id });
+    assert.deepEqual(project.warnings, [
+      { code: 'warning.drifted' },
+      { code: 'warning.notSignedIn', params: { user: 'ada-work' } },
+    ]);
+  });
+});
+
+describe('ordering projects', () => {
+  async function tracked(t, names) {
+    const context = await setup(t);
+    const repos = [];
+    for (const name of names) repos.push(path.resolve(await context.sandbox.initRepo(name)));
+    await context.service.addProjects(repos);
+    return { ...context, repos };
+  }
+  const names = (snapshot) => snapshot.projects.map((project) => project.name);
+
+  it('moves a project to the place it was dropped on', async (t) => {
+    const { service, repos } = await tracked(t, ['api', 'website', 'docs']);
+
+    const result = await service.moveProject(repos[2], 0);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(names(result.snapshot), ['docs', 'api', 'website']);
+  });
+
+  it('moves a project down as well as up', async (t) => {
+    const { service, repos } = await tracked(t, ['api', 'website', 'docs']);
+
+    const result = await service.moveProject(repos[0], 1);
+
+    assert.deepEqual(names(result.snapshot), ['website', 'api', 'docs']);
+  });
+
+  it('keeps the order after a restart', async (t) => {
+    const { service, createService, repos } = await tracked(t, ['api', 'website', 'docs']);
+    await service.moveProject(repos[0], 2);
+
+    assert.deepEqual(names(await createService().getSnapshot()), ['website', 'docs', 'api']);
+  });
+
+  it('stops at the ends of the list when the place is out of range', async (t) => {
+    const { service, repos } = await tracked(t, ['api', 'website', 'docs']);
+
+    const past = await service.moveProject(repos[0], 99);
+    const before = await service.moveProject(repos[2], -5);
+
+    assert.deepEqual(names(past.snapshot), ['website', 'docs', 'api']);
+    assert.deepEqual(names(before.snapshot), ['docs', 'website', 'api']);
+  });
+
+  // The page can only send a position in the list, so anything else is a bug, not something to explain.
+  it('rejects a place that is not a whole number', async (t) => {
+    const { service, repos } = await tracked(t, ['api', 'website']);
+
+    await assert.rejects(() => service.moveProject(repos[1], 'first'), TypeError);
+    assert.deepEqual(names(await service.getSnapshot()), ['api', 'website']);
+  });
+
+  it('refuses a project it does not track', async (t) => {
+    const { sandbox, service } = await tracked(t, ['api', 'website']);
+    const stranger = path.resolve(await sandbox.initRepo('stranger'));
+
+    const result = await service.moveProject(stranger, 0);
+
+    assert.deepEqual(result, { ok: false, error: { code: 'project.untracked' } });
+    assert.deepEqual(names(await service.getSnapshot()), ['api', 'website']);
+  });
+
+  it('changes nothing in the git config of the projects', async (t) => {
+    const { sandbox, service, repos } = await tracked(t, ['api', 'website']);
+    const work = await addAccount(service, workDraft);
+    await service.assignProject(repos[0], work.id);
+
+    await service.moveProject(repos[0], 1);
+
+    assert.equal(await sandbox.getLocal(repos[0], 'user.email'), 'ada@company.example');
+    assert.equal(await sandbox.getLocal(repos[1], 'user.email'), null);
   });
 });
 
@@ -228,8 +356,7 @@ describe('accounts', () => {
 
     const result = await service.saveAccount({ ...workDraft, gitEmail: 'nope' });
 
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.gitEmail);
+    assert.deepEqual(result, { ok: false, errors: { gitEmail: { code: 'gitEmail.invalid' } } });
     assert.equal((await service.getSnapshot()).accounts.length, 0);
   });
 
@@ -238,8 +365,7 @@ describe('accounts', () => {
 
     const result = await service.saveAccount({ ...workDraft, sshKeyPath: '/home/ada/.ssh/missing' });
 
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.sshKeyPath);
+    assert.deepEqual(result, { ok: false, errors: { sshKeyPath: { code: 'sshKeyPath.missing' } } });
   });
 
   it('accepts an SSH key that exists on disk', async (t) => {
@@ -283,6 +409,44 @@ describe('accounts', () => {
     assert.equal(result.ok, true);
     assert.deepEqual(signIns, ['ada-personal']);
     assert.equal(result.snapshot.accounts[0].signedIn, true);
+    assert.deepEqual(result.notices, [{ code: 'signIn.done', params: { user: 'ada-personal' } }]);
+  });
+
+  it('points out a sign-in that ended up in another GitHub account', async (t) => {
+    const { service } = await setup(t, { signedIn: [], signInOutcome: 'someone-else' });
+    const personal = await addAccount(service, personalDraft);
+
+    const result = await service.signIn(personal.id);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.snapshot.accounts[0].signedIn, false);
+    assert.deepEqual(result.notices, [{ code: 'signIn.otherAccount', params: { user: 'ada-personal' } }]);
+  });
+
+  it('passes on why a sign-in did not finish', async (t) => {
+    const { service } = await setup(t, { signedIn: [], signInOutcome: 'failed' });
+    const personal = await addAccount(service, personalDraft);
+
+    const result = await service.signIn(personal.id);
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: 'signIn.failedBecause', params: { detail: 'fatal: User cancelled dialog.' } },
+    });
+  });
+
+  it('says a sign-in did not finish even when the credential manager gave no reason', async (t) => {
+    const { service } = await setup(t, { signedIn: [], signInOutcome: 'gave-up' });
+    const personal = await addAccount(service, personalDraft);
+
+    assert.deepEqual(await service.signIn(personal.id), { ok: false, error: { code: 'signIn.failed' } });
+  });
+
+  it('refuses to sign in to an account that does not exist', async (t) => {
+    const { service, signIns } = await setup(t);
+
+    assert.deepEqual(await service.signIn('missing-account'), { ok: false, error: { code: 'account.missing' } });
+    assert.deepEqual(signIns, []);
   });
 
   it('applies an edited account to the projects that use it', async (t) => {
@@ -311,9 +475,14 @@ describe('accounts', () => {
 
     const result = await service.removeAccount(work.id);
 
-    assert.equal(result.ok, false);
-    assert.match(result.error, /1 project/);
+    assert.deepEqual(result, { ok: false, error: { code: 'account.inUse', params: { count: 1 } } });
     assert.equal((await service.getSnapshot()).accounts.length, 1);
+  });
+
+  it('refuses to remove an account that is already gone', async (t) => {
+    const { service } = await setup(t);
+
+    assert.deepEqual(await service.removeAccount('missing-account'), { ok: false, error: { code: 'account.missing' } });
   });
 
   it('removes an account that no project uses', async (t) => {
@@ -371,7 +540,7 @@ describe('folder rules', () => {
 
     const result = await service.addFolderRule(work.id, folder);
 
-    assert.match(result.snapshot.projects[0].warnings[0], /uses SSH and this account has no SSH key/);
+    assert.deepEqual(result.snapshot.projects[0].warnings, [{ code: 'warning.sshNoKey', params: { remote: 'origin' } }]);
   });
 
   it('lets a project inside the folder keep its own account', async (t) => {
@@ -441,8 +610,33 @@ describe('folder rules', () => {
 
     const result = await service.addFolderRule(personal.id, folder);
 
-    assert.equal(result.ok, false);
-    assert.match(result.error, /already uses Work/);
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: 'folder.taken', params: { folder: `~${path.sep}work`, account: 'Work' } },
+    });
+  });
+
+  it('refuses a folder already covered by a rule whose account is gone', async (t) => {
+    const { sandbox, service, store } = await setup(t, onThisPlatform);
+    const folder = await sandbox.makeDir('work');
+    const work = await addAccount(service, workDraft);
+    await service.addFolderRule(work.id, folder);
+    await store.save({ version: 1, accounts: [], projects: [] });
+    const personal = await addAccount(service, personalDraft);
+
+    const result = await service.addFolderRule(personal.id, folder);
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: 'folder.takenByStray', params: { folder: `~${path.sep}work` } },
+    });
+  });
+
+  it('asks for a folder when none was chosen', async (t) => {
+    const { service } = await setup(t, onThisPlatform);
+    const work = await addAccount(service, workDraft);
+
+    assert.deepEqual(await service.addFolderRule(work.id, ' '), { ok: false, error: { code: 'folder.required' } });
   });
 
   it('refuses a folder that does not exist', async (t) => {
@@ -451,7 +645,10 @@ describe('folder rules', () => {
 
     const result = await service.addFolderRule(work.id, path.join(sandbox.root, 'nowhere'));
 
-    assert.equal(result.ok, false);
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: 'folder.missing', params: { folder: `~${path.sep}nowhere` } },
+    });
     assert.doesNotMatch(await sandbox.readGlobalFile(), /includeif/i);
   });
 
@@ -462,7 +659,10 @@ describe('folder rules', () => {
 
     const result = await service.addFolderRule(work.id, folder);
 
-    assert.equal(result.ok, false);
+    assert.deepEqual(result, {
+      ok: false,
+      error: { code: 'folder.pattern', params: { folder: `~${path.sep}[archive]` } },
+    });
     assert.doesNotMatch(await sandbox.readGlobalFile(), /includeif/i);
   });
 
@@ -474,8 +674,7 @@ describe('folder rules', () => {
 
     const result = await service.removeAccount(work.id);
 
-    assert.equal(result.ok, false);
-    assert.match(result.error, /1 folder/);
+    assert.deepEqual(result, { ok: false, error: { code: 'account.hasRules', params: { count: 1 } } });
   });
 
   it('removes a folder rule and leaves no trace in the global config', async (t) => {
@@ -577,8 +776,7 @@ describe('owner rules', () => {
 
     const result = await service.addOwnerRule(work.id, 'not a name/**');
 
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.owner);
+    assert.deepEqual(result, { ok: false, errors: { owner: { code: 'owner.invalid' } } });
     assert.doesNotMatch(await sandbox.readGlobalFile(), /includeif/i);
   });
 
@@ -590,19 +788,38 @@ describe('owner rules', () => {
 
     const result = await service.addOwnerRule(personal.id, 'ACME');
 
-    assert.equal(result.ok, false);
-    assert.match(result.errors.owner, /already uses Work/);
+    assert.deepEqual(result, {
+      ok: false,
+      errors: { owner: { code: 'owner.taken', params: { owner: 'acme', account: 'Work' } } },
+    });
   });
 
-  it('keeps an account that still has owner rules', async (t) => {
-    const { service } = await setup(t, onThisPlatform);
+  it('refuses an owner already covered by a rule whose account is gone', async (t) => {
+    const { service, store } = await setup(t, onThisPlatform);
     const work = await addAccount(service, workDraft);
     await service.addOwnerRule(work.id, 'acme');
+    await store.save({ version: 1, accounts: [], projects: [] });
+    const personal = await addAccount(service, personalDraft);
+
+    const result = await service.addOwnerRule(personal.id, 'acme');
+
+    assert.deepEqual(result, {
+      ok: false,
+      errors: { owner: { code: 'owner.takenByStray', params: { owner: 'acme' } } },
+    });
+  });
+
+  it('counts folder and owner rules together when they keep an account from being removed', async (t) => {
+    const { sandbox, service } = await setup(t, onThisPlatform);
+    const folder = await sandbox.makeDir('work');
+    const work = await addAccount(service, workDraft);
+    await service.addOwnerRule(work.id, 'acme');
+    await service.addOwnerRule(work.id, 'acme-labs');
+    await service.addFolderRule(work.id, folder);
 
     const result = await service.removeAccount(work.id);
 
-    assert.equal(result.ok, false);
-    assert.match(result.error, /1 owner rule/);
+    assert.deepEqual(result, { ok: false, error: { code: 'account.hasRules', params: { count: 3 } } });
   });
 
   it('removes an owner rule and leaves no trace in the global config', async (t) => {
@@ -650,8 +867,7 @@ describe('SSH keys', () => {
 
     const result = await service.generateSshKey({ label: ' ', gitEmail: 'ada@company.example' });
 
-    assert.equal(result.ok, false);
-    assert.ok(result.errors.label);
+    assert.deepEqual(result, { ok: false, errors: { label: { code: 'sshKey.labelRequired' } } });
     assert.deepEqual(keyRequests, []);
   });
 
@@ -661,18 +877,27 @@ describe('SSH keys', () => {
 
     const result = await service.generateSshKey({ label: 'Work', gitEmail: 'ada@company.example' });
 
-    assert.equal(result.ok, false);
-    assert.match(result.errors.sshKeyPath, /already exists/);
+    assert.deepEqual(result, {
+      ok: false,
+      errors: { sshKeyPath: { code: 'sshKey.exists', params: { name: 'id_ed25519_work' } } },
+    });
     assert.deepEqual(keyRequests, []);
   });
 
-  it('explains what to do when ssh-keygen is missing', async (t) => {
+  it('says so when ssh-keygen is missing', async (t) => {
     const { service } = await setup(t, { keygenResult: { ok: false, reason: 'not-found' } });
 
     const result = await service.generateSshKey({ label: 'Work', gitEmail: 'ada@company.example' });
 
-    assert.equal(result.ok, false);
-    assert.match(result.errors.sshKeyPath, /ssh-keygen was not found/);
+    assert.deepEqual(result, { ok: false, errors: { sshKeyPath: { code: 'sshKey.keygenMissing' } } });
+  });
+
+  it('says so when the key could not be created', async (t) => {
+    const { service } = await setup(t, { keygenResult: { ok: false, reason: 'failed' } });
+
+    const result = await service.generateSshKey({ label: 'Work', gitEmail: 'ada@company.example' });
+
+    assert.deepEqual(result, { ok: false, errors: { sshKeyPath: { code: 'sshKey.failed' } } });
   });
 
   it('reads the public key that belongs to a private key', async (t) => {
@@ -691,5 +916,85 @@ describe('environment', () => {
     const snapshot = await service.getSnapshot();
 
     assert.match(snapshot.environment.gitVersion, /^\d+\.\d+/);
+  });
+
+  it('reports the credential manager and its version', async (t) => {
+    const { service } = await setup(t);
+
+    const { credentialManager } = (await service.getSnapshot()).environment;
+
+    assert.deepEqual(credentialManager, { available: true, accounts: ['ada-work'], version: '2.6.1' });
+  });
+});
+
+describe('settings', () => {
+  it('start in the language of the system, following its theme, with the tour still to see', async (t) => {
+    const { service } = await setup(t, { defaultLanguage: 'es' });
+
+    const expected = { language: 'es', theme: 'system', tourSeen: false };
+    assert.deepEqual((await service.getSnapshot()).settings, expected);
+    assert.deepEqual(await service.getSettings(), expected);
+  });
+
+  it('change one at a time and keep the others', async (t) => {
+    const { service } = await setup(t);
+    await service.saveSettings({ theme: 'dark' });
+
+    const result = await service.saveSettings({ language: 'es' });
+
+    assert.deepEqual(result, { ok: true, settings: { language: 'es', theme: 'dark', tourSeen: false } });
+    assert.deepEqual((await service.getSnapshot()).settings, result.settings);
+  });
+
+  it('are remembered after a restart, whatever the system language is by then', async (t) => {
+    const { service, createService } = await setup(t, { defaultLanguage: 'es' });
+    await service.saveSettings({ language: 'en', theme: 'light', tourSeen: true });
+
+    assert.deepEqual(await createService().getSettings(), { language: 'en', theme: 'light', tourSeen: true });
+  });
+
+  it('leave accounts and projects as they are', async (t) => {
+    const { sandbox, service } = await setup(t);
+    const repo = await sandbox.initRepo('api');
+    await addAccount(service, workDraft);
+    await service.addProjects([repo]);
+
+    await service.saveSettings({ theme: 'dark' });
+
+    const snapshot = await service.getSnapshot();
+    assert.deepEqual(snapshot.accounts.map((account) => account.label), ['Work']);
+    assert.deepEqual(snapshot.projects.map((project) => project.name), ['api']);
+  });
+
+  it('survive saving an account or a project', async (t) => {
+    const { sandbox, service } = await setup(t);
+    await service.saveSettings({ language: 'es', theme: 'dark' });
+
+    await addAccount(service, workDraft);
+    await service.addProjects([await sandbox.initRepo('api')]);
+
+    assert.deepEqual(await service.getSettings(), { language: 'es', theme: 'dark', tourSeen: false });
+  });
+
+  // The page shows the last answer it got. A refresh asked for before a change must not answer after it.
+  it('are never reported older than they are: reads and changes answer in the order they were asked', async (t) => {
+    const { service } = await setup(t);
+    const answers = [];
+
+    await Promise.all([
+      service.getSnapshot().then((snapshot) => answers.push(`read ${snapshot.settings.theme}`)),
+      service.saveSettings({ theme: 'dark' }).then(() => answers.push('saved dark')),
+      service.getSnapshot().then((snapshot) => answers.push(`read ${snapshot.settings.theme}`)),
+    ]);
+
+    assert.deepEqual(answers, ['read system', 'saved dark', 'read dark']);
+  });
+
+  // The page only offers values that exist, so anything else is a bug, not something to explain.
+  it('reject a value the app does not have', async (t) => {
+    const { service } = await setup(t);
+
+    await assert.rejects(() => service.saveSettings({ language: 'fr' }), TypeError);
+    assert.equal((await service.getSettings()).language, 'en');
   });
 });

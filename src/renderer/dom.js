@@ -4,6 +4,9 @@
  *
  * Props: `class`, `dataset` (object), `style` (object of CSS custom properties),
  * `on*` (event listeners), and anything else as a property or attribute.
+ *
+ * Children can be nodes, text, or lists of them nested to any depth; null, undefined
+ * and false are skipped, so a child can be written as `condition && h(...)`.
  */
 export function h(tag, props = {}, ...children) {
   const element = document.createElement(tag);
@@ -19,7 +22,7 @@ export function h(tag, props = {}, ...children) {
     else element[name] = value;
   }
 
-  element.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
+  element.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
   return element;
 }
 

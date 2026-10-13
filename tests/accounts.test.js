@@ -59,6 +59,15 @@ describe('validateAccount', () => {
     assert.deepEqual(Object.keys(result.errors).sort(), ['gitEmail', 'gitName', 'githubUser', 'label']);
   });
 
+  it('names each problem with a code, so the interface can say it in any language', () => {
+    const result = validateAccount({ ...draft, label: 'x'.repeat(41), gitEmail: 'ada' });
+
+    assert.deepEqual(result.errors, {
+      label: { code: 'label.tooLong', params: { max: 40 } },
+      gitEmail: { code: 'gitEmail.invalid' },
+    });
+  });
+
   it('rejects an email without a domain', () => {
     const result = validateAccount({ ...draft, gitEmail: 'ada' });
 

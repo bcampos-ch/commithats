@@ -2,8 +2,10 @@ import path from 'node:path';
 import { validateAccount } from './accounts.js';
 import { collectWarnings, describeAssignment } from './assignment.js';
 import { ProjectError, readOwnSshCommand } from './git-config.js';
+import { message } from './messages.js';
 import { abbreviateHome } from './paths.js';
 import { applyAccount, clearAccount, findRepositoryRoot, inspectProject } from './project-identity.js';
+import { createQueue } from './queue.js';
 import {
   accountIdFromInclude,
   hasPatternCharacters,
@@ -12,14 +14,9 @@ import {
   saveRules,
   writeAccountInclude,
 } from './rules.js';
+import { readSettings, validateSettingsChange } from './settings.js';
 import { DEFAULT_SSH_COMMAND } from './ssh-command.js';
 
-const DRIFT_WARNING =
-  "This project's git config no longer matches the account. Choose the account again to reapply it.";
-const KEYGEN_PROBLEMS = {
-  'not-found': 'ssh-keygen was not found. Install the OpenSSH client, or create the key yourself and choose it.',
-  failed: "The key couldn't be created. Check that you can write to the .ssh folder.",
-};
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
 const GITHUB_OWNER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$/;
 const OWNER_IN_GITHUB_URL = /github\.com[:/]+([^/\s]+)/i;
@@ -29,12 +26,16 @@ const OWNER_IN_GITHUB_URL = /github\.com[:/]+([^/\s]+)/i;
  *
  * Every operation answers with `{ ok: true, snapshot, notices? }` or
  * `{ ok: false, error | errors }`. The snapshot is the whole picture the UI shows,
- * so the UI never has to work anything out by itself.
+ * so the UI never has to work anything out by itself. Errors, warnings and notices
+ * are messages (see messages.js), never sentences: the UI says them in the language
+ * the person chose. Input that the UI's own controls cannot produce is a bug, so it
+ * throws instead of being explained.
  *
- * Ports: `git` runs git, `store` persists accounts and tracked projects, `gcm` talks
- * to the credential manager, `files` touches the file system, `keygen` creates SSH keys.
- * `includeDir` is where the settings files that rules include are kept, and `sshDir`
- * is where new keys go.
+ * Ports: `git` runs git, `store` persists accounts, tracked projects and settings,
+ * `gcm` talks to the credential manager, `files` touches the file system, `keygen`
+ * creates SSH keys. `includeDir` is where the settings files that rules include are
+ * kept, `sshDir` is where new keys go, and `defaultLanguage` is the language used
+ * until the person picks one.
  */
 export function createAppService({
   git,
@@ -46,13 +47,18 @@ export function createAppService({
   sshDir,
   homeDir = '',
   platform = process.platform,
+  defaultLanguage = 'en',
 }) {
+  // One operation at a time, reads included. Two quick clicks cannot interleave their writes,
+  // and answers come back in the order things happened: the UI shows the last answer it got,
+  // so a read asked for before a change must not answer after it.
   const exclusive = createQueue();
   const ruleOptions = { includeDir, platform };
 
   const samePath = (a, b) => (platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
   const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
   const shown = (fullPath) => abbreviateHome(fullPath, homeDir, platform);
+  const settingsOf = (state) => readSettings(state.settings, { defaultLanguage });
 
   async function readGitVersion() {
     try {
@@ -101,6 +107,7 @@ export function createAppService({
 
     return {
       environment: { gitVersion, credentialManager },
+      settings: settingsOf(state),
       accounts,
       projects,
       strayFolderRules: rules.folders.filter((rule) => !hasAccount(rule)).map(toFolderView),
@@ -137,7 +144,7 @@ export function createAppService({
     const effectiveAccountId = assignment.accountId ?? inherited?.accountId ?? null;
     const account = accounts.find((candidate) => candidate.id === effectiveAccountId) ?? null;
     const warnings = account === null ? [] : collectWarnings(inspection, account, { signedInAccounts });
-    if (assignment.kind === 'drifted') warnings.unshift(DRIFT_WARNING);
+    if (assignment.kind === 'drifted') warnings.unshift(message('warning.drifted'));
 
     return {
       path: inspection.path,
@@ -177,15 +184,31 @@ export function createAppService({
       try {
         return await task(...args);
       } catch (error) {
-        if (error instanceof ProjectError) return { ok: false, error: error.message };
+        if (error instanceof ProjectError) return { ok: false, error: error.problem };
         throw error;
       }
     };
 
+  const readSnapshot = exclusive(async () => buildSnapshot(await store.load()));
+
   return {
-    async getSnapshot() {
-      return buildSnapshot(await store.load());
+    getSnapshot: readSnapshot,
+
+    /** The settings alone, for whoever needs them before there is a window to show a snapshot in. */
+    async getSettings() {
+      return settingsOf(await store.load());
     },
+
+    /** Changes one or more settings and answers with all of them. Nothing in git depends on a setting. */
+    saveSettings: exclusive(async (change) => {
+      const validation = validateSettingsChange(change);
+      if (!validation.ok) throw new TypeError('That is not a setting of the app, or not a value it can take.');
+
+      const state = await store.load();
+      const nextState = { ...state, settings: { ...state.settings, ...validation.change } };
+      await store.save(nextState);
+      return { ok: true, settings: settingsOf(nextState) };
+    }),
 
     saveAccount: exclusive(
       reportingGitFailures(async (input) => {
@@ -195,7 +218,7 @@ export function createAppService({
 
         const { account } = validation;
         if (account.sshKeyPath !== null && !(await files.exists(account.sshKeyPath))) {
-          return { ok: false, errors: { sshKeyPath: "That file doesn't exist. Choose the private key again." } };
+          return { ok: false, errors: { sshKeyPath: message('sshKeyPath.missing') } };
         }
 
         const isUpdate = state.accounts.some((existing) => existing.id === account.id);
@@ -214,24 +237,16 @@ export function createAppService({
       reportingGitFailures(async (accountId) => {
         const state = await store.load();
         if (!state.accounts.some((account) => account.id === accountId)) {
-          return { ok: false, error: 'That account no longer exists.' };
+          return { ok: false, error: message('account.missing') };
         }
 
         const inspections = await Promise.all(state.projects.map((projectPath) => inspectProject(git, projectPath)));
         const projectCount = inspections.filter((inspection) => inspection.managedAccountId === accountId).length;
-        if (projectCount > 0) {
-          const projects = projectCount === 1 ? '1 project' : `${projectCount} projects`;
-          return { ok: false, error: `This account is assigned to ${projects}. Move them to another account first.` };
-        }
+        if (projectCount > 0) return { ok: false, error: message('account.inUse', { count: projectCount }) };
 
         const rules = await listRules(git, ruleOptions);
-        const folderCount = rules.folders.filter((rule) => rule.accountId === accountId).length;
-        const ownerCount = rules.owners.filter((rule) => rule.accountId === accountId).length;
-        if (folderCount + ownerCount > 0) {
-          const inUse = [countOf(folderCount, 'folder rule'), countOf(ownerCount, 'owner rule')].filter(Boolean);
-          const them = folderCount + ownerCount === 1 ? 'it' : 'them';
-          return { ok: false, error: `This account still has ${inUse.join(' and ')}. Remove ${them} first.` };
-        }
+        const ruleCount = [...rules.folders, ...rules.owners].filter((rule) => rule.accountId === accountId).length;
+        if (ruleCount > 0) return { ok: false, error: message('account.hasRules', { count: ruleCount }) };
 
         const nextState = { ...state, accounts: state.accounts.filter((account) => account.id !== accountId) };
         await store.save(nextState);
@@ -240,38 +255,39 @@ export function createAppService({
       }),
     ),
 
-    // Not queued: a sign-in waits on a person and must not hold up everything else.
+    // The sign-in itself is not queued: it waits on a person and must not hold up everything else.
     async signIn(accountId) {
       const account = (await store.load()).accounts.find((candidate) => candidate.id === accountId);
-      if (!account) return { ok: false, error: 'That account no longer exists.' };
+      if (!account) return { ok: false, error: message('account.missing') };
 
       const result = await gcm.signIn(account.githubUser);
-      if (!result.ok) return { ok: false, error: `The sign-in didn't finish. ${result.message ?? ''}`.trim() };
+      if (!result.ok) {
+        const error = result.detail ? message('signIn.failedBecause', { detail: result.detail }) : message('signIn.failed');
+        return { ok: false, error };
+      }
 
-      const snapshot = await buildSnapshot(await store.load());
+      const snapshot = await readSnapshot();
       const signedIn = snapshot.accounts.find((candidate) => candidate.id === accountId)?.signedIn;
-      const notice =
-        signedIn === false
-          ? `The sign-in finished, but "${account.githubUser}" isn't signed in. Check which GitHub account your browser used.`
-          : `Signed in as ${account.githubUser}.`;
+      const user = account.githubUser;
+      // The browser decides which GitHub account signs in, and it may not be the one that was asked for.
+      const notice = signedIn === false ? message('signIn.otherAccount', { user }) : message('signIn.done', { user });
       return { ok: true, snapshot, notices: [notice] };
     },
 
     /** Creates a new key in the SSH folder, named after the account label. It never replaces a file. */
     generateSshKey: exclusive(async (input) => {
       const label = text(input?.label).trim();
-      if (label === '') return { ok: false, errors: { label: 'Enter a label first. The key file is named after it.' } };
+      if (label === '') return { ok: false, errors: { label: message('sshKey.labelRequired') } };
 
       const keyPath = path.join(sshDir, `id_ed25519_${slugify(label)}`);
       if ((await files.exists(keyPath)) || (await files.exists(`${keyPath}.pub`))) {
-        const name = path.basename(keyPath);
-        return { ok: false, errors: { sshKeyPath: `A key named ${name} already exists. Select it with "Choose file".` } };
+        return { ok: false, errors: { sshKeyPath: message('sshKey.exists', { name: path.basename(keyPath) }) } };
       }
 
       await files.ensureDir(sshDir);
       const comment = text(input?.gitEmail).replace(CONTROL_CHARACTERS, '').trim() || label;
       const result = await keygen.generate({ keyPath, comment });
-      if (!result.ok) return { ok: false, errors: { sshKeyPath: KEYGEN_PROBLEMS[result.reason] ?? KEYGEN_PROBLEMS.failed } };
+      if (!result.ok) return { ok: false, errors: { sshKeyPath: keygenProblem(result.reason) } };
 
       return { ok: true, path: keyPath, publicKey: await keygen.readPublicKey(keyPath) };
     }),
@@ -286,23 +302,22 @@ export function createAppService({
       reportingGitFailures(async (accountId, folderPath) => {
         const state = await store.load();
         const account = state.accounts.find((candidate) => candidate.id === accountId);
-        if (!account) return { ok: false, error: 'That account no longer exists.' };
-        if (text(folderPath).trim() === '') return { ok: false, error: 'Choose a folder first.' };
+        if (!account) return { ok: false, error: message('account.missing') };
+        if (text(folderPath).trim() === '') return { ok: false, error: message('folder.required') };
 
         const folder = path.resolve(folderPath);
-        if (!(await files.exists(folder))) return { ok: false, error: `"${shown(folder)}" doesn't exist anymore.` };
-        if (hasPatternCharacters(folder)) {
-          return {
-            ok: false,
-            error: `Git can't target "${shown(folder)}" exactly because its path contains *, ?, or brackets. Choose another folder.`,
-          };
-        }
+        if (!(await files.exists(folder))) return { ok: false, error: message('folder.missing', { folder: shown(folder) }) };
+        // Git reads *, ? and brackets in a path as a pattern, so such a folder cannot be targeted exactly.
+        if (hasPatternCharacters(folder)) return { ok: false, error: message('folder.pattern', { folder: shown(folder) }) };
 
         const rules = await listRules(git, ruleOptions);
         const taken = rules.folders.find((rule) => samePath(rule.folder, folder));
         if (taken) {
-          const owner = state.accounts.find((candidate) => candidate.id === taken.accountId)?.label ?? 'another account';
-          return { ok: false, error: `"${shown(folder)}" already uses ${owner}. Remove that rule first.` };
+          const holder = state.accounts.find((candidate) => candidate.id === taken.accountId);
+          const error = holder
+            ? message('folder.taken', { folder: shown(folder), account: holder.label })
+            : message('folder.takenByStray', { folder: shown(folder) });
+          return { ok: false, error };
         }
 
         await writeInclude(account, await readSshOptions());
@@ -329,21 +344,19 @@ export function createAppService({
       reportingGitFailures(async (accountId, input) => {
         const state = await store.load();
         const account = state.accounts.find((candidate) => candidate.id === accountId);
-        if (!account) return { ok: false, error: 'That account no longer exists.' };
+        if (!account) return { ok: false, error: message('account.missing') };
 
         const owner = ownerFrom(text(input));
-        if (owner === null) {
-          return {
-            ok: false,
-            errors: { owner: 'Enter a GitHub user or organization, like "acme", or paste a repository URL.' },
-          };
-        }
+        if (owner === null) return { ok: false, errors: { owner: message('owner.invalid') } };
 
         const rules = await listRules(git, ruleOptions);
         const taken = rules.owners.find((rule) => sameName(rule.owner, owner));
         if (taken) {
-          const label = state.accounts.find((candidate) => candidate.id === taken.accountId)?.label ?? 'another account';
-          return { ok: false, errors: { owner: `"${taken.owner}" already uses ${label}. Remove that rule first.` } };
+          const holder = state.accounts.find((candidate) => candidate.id === taken.accountId);
+          const error = holder
+            ? message('owner.taken', { owner: taken.owner, account: holder.label })
+            : message('owner.takenByStray', { owner: taken.owner });
+          return { ok: false, errors: { owner: error } };
         }
 
         await writeInclude(account, await readSshOptions());
@@ -371,8 +384,9 @@ export function createAppService({
         if (typeof folderPath !== 'string') continue;
         const root = await findRepositoryRoot(git, folderPath);
         const name = path.basename(root ?? folderPath);
-        if (root === null) notices.push(notARepositoryNotice(name));
-        else if (projects.some((existing) => samePath(existing, root))) notices.push(`"${name}" is already in the list.`);
+        // A plain folder is usually where repositories are about to be cloned, which is what a folder rule is for.
+        if (root === null) notices.push(message('project.notRepository', { name }));
+        else if (projects.some((existing) => samePath(existing, root))) notices.push(message('project.alreadyListed', { name }));
         else projects.push(root);
       }
 
@@ -389,17 +403,35 @@ export function createAppService({
       return { ok: true, snapshot: await buildSnapshot(nextState) };
     }),
 
+    /**
+     * Puts a tracked project at `index` in the list, counting from zero. A place past
+     * either end of the list means that end. Only the order the app shows changes.
+     */
+    moveProject: exclusive(async (projectPath, index) => {
+      if (!Number.isInteger(index)) throw new TypeError('The place of a project in the list must be a whole number.');
+
+      const state = await store.load();
+      const tracked = state.projects.find((existing) => samePath(existing, text(projectPath)));
+      if (tracked === undefined) return { ok: false, error: message('project.untracked') };
+
+      const projects = state.projects.filter((existing) => existing !== tracked);
+      projects.splice(Math.max(0, Math.min(index, projects.length)), 0, tracked);
+      const nextState = { ...state, projects };
+      await store.save(nextState);
+      return { ok: true, snapshot: await buildSnapshot(nextState) };
+    }),
+
     assignProject: exclusive(
       reportingGitFailures(async (projectPath, accountId) => {
         const state = await store.load();
         const tracked = state.projects.find((existing) => samePath(existing, text(projectPath)));
-        if (tracked === undefined) return { ok: false, error: "That project isn't in the list anymore." };
+        if (tracked === undefined) return { ok: false, error: message('project.untracked') };
 
         if (accountId === null) {
           await clearAccount(git, tracked);
         } else {
           const account = state.accounts.find((candidate) => candidate.id === accountId);
-          if (!account) return { ok: false, error: 'That account no longer exists.' };
+          if (!account) return { ok: false, error: message('account.missing') };
           await applyAccount(git, tracked, account, await readSshOptions());
         }
 
@@ -425,17 +457,8 @@ function text(value) {
   return typeof value === 'string' ? value : '';
 }
 
-// A plain folder is usually where repositories are about to be cloned, which is what a folder rule is for.
-function notARepositoryNotice(name) {
-  return (
-    `"${name}" isn't a git repository, so it can't be a project. ` +
-    'To use an account for everything you clone into it, choose "Add folder" on that account.'
-  );
-}
-
-function countOf(count, noun) {
-  if (count === 0) return null;
-  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+function keygenProblem(reason) {
+  return reason === 'not-found' ? message('sshKey.keygenMissing') : message('sshKey.failed');
 }
 
 // Accepts "acme", "@acme", "acme/api" or a GitHub URL, and answers with the owner in lowercase.
@@ -451,15 +474,4 @@ function slugify(label) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug === '' ? 'account' : slug;
-}
-
-// Runs one mutating operation at a time, so two quick clicks cannot interleave their writes.
-function createQueue() {
-  let tail = Promise.resolve();
-  return (task) =>
-    (...args) => {
-      const run = tail.then(() => task(...args));
-      tail = run.catch(() => {});
-      return run;
-    };
 }

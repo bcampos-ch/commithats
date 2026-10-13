@@ -1,12 +1,19 @@
+import { message } from './messages.js';
+
 const EXIT_KEY_NOT_FOUND = 5;
 const EXIT_NO_MATCH = 1;
 const FIELDS_PER_ENTRY = 3;
 
+/**
+ * Git could not do what the app asked. `problem` is the message (see messages.js)
+ * to show the person; the text of the error itself is for the log.
+ */
 export class ProjectError extends Error {
-  constructor(code, message) {
-    super(message);
+  constructor(code, text, problem) {
+    super(text);
     this.name = 'ProjectError';
     this.code = code;
+    this.problem = problem;
   }
 }
 
@@ -125,7 +132,8 @@ export function normalizeKey(key) {
   return `${key.slice(0, first).toLowerCase()}${key.slice(first, last)}${key.slice(last).toLowerCase()}`;
 }
 
+// Git's own last words are passed on as they are: they name the file or the key at fault.
 function gitFailed(action, result) {
-  const reason = result.stderr.trim().split('\n').at(-1) || `git exited with code ${result.code}`;
-  return new ProjectError('GIT_FAILED', `Git could not ${action}: ${reason}`);
+  const detail = result.stderr.trim().split('\n').at(-1) || `exit code ${result.code}`;
+  return new ProjectError('GIT_FAILED', `Git could not ${action}: ${detail}`, message('git.failed', { detail }));
 }

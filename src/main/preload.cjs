@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 // The page gets these functions and nothing else: no Node, no generic IPC access.
 contextBridge.exposeInMainWorld('accountSwitcher', {
   getState: () => ipcRenderer.invoke('state:get'),
+  getAppInfo: () => ipcRenderer.invoke('app:info'),
+  saveSettings: (change) => ipcRenderer.invoke('settings:save', change),
 
   saveAccount: (draft) => ipcRenderer.invoke('accounts:save', draft),
   removeAccount: (accountId) => ipcRenderer.invoke('accounts:remove', accountId),
@@ -21,6 +23,7 @@ contextBridge.exposeInMainWorld('accountSwitcher', {
 
   addProjects: () => ipcRenderer.invoke('projects:add'),
   removeProject: (projectPath) => ipcRenderer.invoke('projects:remove', projectPath),
+  moveProject: (projectPath, index) => ipcRenderer.invoke('projects:move', projectPath, index),
   assignProject: (projectPath, accountId) => ipcRenderer.invoke('projects:assign', projectPath, accountId),
 
   copyText: (value) => ipcRenderer.invoke('clipboard:write', value),

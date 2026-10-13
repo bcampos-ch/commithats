@@ -1,9 +1,24 @@
-import { accountsView, detailView, environmentView, projectsView, strayRulesView } from './views.js';
+import { confirm } from './confirm.js';
+import { setLanguage, t } from './i18n.js';
+import { makeReorderable } from './reorder.js';
+import { createTour } from './tour.js';
+import {
+  accountsView,
+  detailView,
+  environmentView,
+  infoView,
+  projectsView,
+  settingsView,
+  strayRulesView,
+  versionRows,
+} from './views.js';
 
 // Container: owns the state, talks to the main process, and re-renders the views.
 
 const api = window.accountSwitcher;
 const TOAST_DURATION_MS = 6000;
+// What is said when something fails in a way nobody planned for.
+const UNEXPECTED_FAILURE = { code: 'error.generic' };
 
 const elements = {
   environment: document.getElementById('environment'),
@@ -11,6 +26,7 @@ const elements = {
   projects: document.getElementById('projects'),
   detail: document.getElementById('detail'),
   toasts: document.getElementById('toasts'),
+  announcer: document.getElementById('announcer'),
   accountDialog: document.getElementById('account-dialog'),
   accountDialogTitle: document.getElementById('account-dialog-title'),
   accountForm: document.getElementById('account-form'),
@@ -20,26 +36,41 @@ const elements = {
   ownerDialog: document.getElementById('owner-dialog'),
   ownerDialogIntro: document.getElementById('owner-dialog-intro'),
   ownerForm: document.getElementById('owner-form'),
+  settingsDialog: document.getElementById('settings-dialog'),
+  settingsBody: document.getElementById('settings-body'),
+  infoDialog: document.getElementById('info-dialog'),
+  infoBody: document.getElementById('info-body'),
+  infoNote: document.getElementById('info-note'),
 };
 
 const state = {
   snapshot: null,
+  // What the main process knows about the running app. It does not change while the app runs.
+  appInfo: null,
   selectedPath: null,
   editingAccountId: null,
   ownerRuleAccountId: null,
   pendingOperations: 0,
+  pendingMoves: 0,
 };
+
+const tour = createTour({ onClose: rememberTourWasSeen });
 
 const handlers = {
   onEditAccount: (account) => openAccountDialog(account),
 
   async onRemoveAccount(account) {
-    if (!window.confirm(`Remove the account "${account.label}" from the app?`)) return;
-    await run(() => api.removeAccount(account.id));
+    const confirmed = await confirm({
+      title: t('confirm.removeAccount.title'),
+      question: t('confirm.removeAccount.question', { account: account.label }),
+      detail: t('confirm.removeAccount.detail'),
+      action: t('account.remove'),
+    });
+    if (confirmed) await run(() => api.removeAccount(account.id));
   },
 
   async onSignIn(account) {
-    const dismiss = showToast('Finish signing in to GitHub in the Git Credential Manager window.', { sticky: true });
+    const dismiss = showToast(t('signIn.waiting'), { sticky: true });
     try {
       await run(() => api.signIn(account.id), { blocking: false });
     } finally {
@@ -52,34 +83,35 @@ const handlers = {
     const picked = await api.pickFolder();
     if (!picked.ok || !picked.path) return;
 
-    const question =
-      `Use "${account.label}" for everything inside ${picked.displayPath}?\n\n` +
-      'This adds one rule to your global git config. It loads the settings of this account for repositories in ' +
-      'that folder, including ones you clone later. Your global name and email stay as they are, and a project ' +
-      'with its own account keeps it.';
-    if (!window.confirm(question)) return;
-
-    await run(() => api.addFolderRule(account.id, picked.path));
+    const confirmed = await confirm({
+      title: t('confirm.addFolder.title'),
+      question: t('confirm.addFolder.question', { account: account.label, folder: picked.displayPath }),
+      detail: t('confirm.addFolder.detail'),
+      action: t('rule.add'),
+    });
+    if (confirmed) await run(() => api.addFolderRule(account.id, picked.path));
   },
 
   async onRemoveFolder(folder) {
-    const question =
-      `Remove the rule for ${folder.displayPath}?\n\n` +
-      'Repositories inside it go back to your global identity, unless another rule or their own account applies.';
-    if (!window.confirm(question)) return;
-
-    await run(() => api.removeFolderRule(folder.path));
+    const confirmed = await confirm({
+      title: t('confirm.removeRule.title'),
+      question: t('confirm.removeFolder.question', { folder: folder.displayPath }),
+      detail: t('confirm.removeFolder.detail'),
+      action: t('confirm.removeRule.title'),
+    });
+    if (confirmed) await run(() => api.removeFolderRule(folder.path));
   },
 
   onAddOwner: (account) => openOwnerDialog(account),
 
   async onRemoveOwner(owner) {
-    const question =
-      `Remove the rule for repositories owned by ${owner}?\n\n` +
-      'They go back to your global identity, unless another rule or their own account applies.';
-    if (!window.confirm(question)) return;
-
-    await run(() => api.removeOwnerRule(owner));
+    const confirmed = await confirm({
+      title: t('confirm.removeRule.title'),
+      question: t('confirm.removeOwner.question', { owner }),
+      detail: t('confirm.removeOwner.detail'),
+      action: t('confirm.removeRule.title'),
+    });
+    if (confirmed) await run(() => api.removeOwnerRule(owner));
   },
 
   onSelectProject(project) {
@@ -96,7 +128,12 @@ const handlers = {
 
   async onRemoveProject(project) {
     const result = await run(() => api.removeProject(project.path));
-    if (result?.ok) showToast(`Removed ${project.name} from the list. Its git config was left as it is.`);
+    if (result?.ok) showToast(t('project.removed', { name: project.name }));
+  },
+
+  async onChangeSettings(change) {
+    const result = await run(() => api.saveSettings(change), { blocking: false });
+    if (result?.ok) applySettings(result.settings);
   },
 };
 
@@ -104,24 +141,35 @@ const handlers = {
  * Runs an operation against the main process and applies its answer:
  * a new snapshot re-renders the page, notices and errors become toasts.
  * Field errors are returned to the caller, which knows where to show them.
+ *
+ * `blocking` keeps the page from being clicked while the operation runs. `keepsSnapshot`
+ * is asked when the answer arrives, and says whether its snapshot is still the latest word.
  */
-async function run(operation, { blocking = true } = {}) {
+async function run(operation, { blocking = true, keepsSnapshot = () => true } = {}) {
   if (blocking) setBusy(+1);
   try {
     const result = await operation();
-    if (result.snapshot) {
-      state.snapshot = result.snapshot;
-      render();
-    }
-    for (const notice of result.notices ?? []) showToast(notice);
-    if (!result.ok && result.error) showToast(result.error, { tone: 'error' });
+    if (result.snapshot && keepsSnapshot()) applySnapshot(result.snapshot);
+    for (const notice of result.notices ?? []) showToast(t(notice));
+    if (!result.ok && result.error) showToast(t(result.error), { tone: 'error' });
     return result;
   } catch {
-    showToast('Something went wrong. Try again.', { tone: 'error' });
+    showToast(t(UNEXPECTED_FAILURE), { tone: 'error' });
     return null;
   } finally {
     if (blocking) setBusy(-1);
   }
+}
+
+function applySnapshot(snapshot) {
+  state.snapshot = snapshot;
+  setLanguage(snapshot.settings.language);
+  render();
+}
+
+// Settings change nothing in git, so they are swapped in without reading everything again.
+function applySettings(settings) {
+  if (state.snapshot) applySnapshot({ ...state.snapshot, settings });
 }
 
 function render() {
@@ -142,6 +190,8 @@ function render() {
   ]);
   replace(elements.projects, projectsView(snapshot.projects, snapshot.accounts, state.selectedPath, handlers));
   replace(elements.detail, detailView(selected));
+  replace(elements.settingsBody, settingsView(snapshot.settings, handlers));
+  if (state.appInfo) replace(elements.infoBody, infoView(state.appInfo, snapshot.environment));
 
   // The detail panel can grow over the list, so keep the project it describes in view.
   elements.projects.querySelector('.project--selected')?.scrollIntoView({ block: 'nearest' });
@@ -167,10 +217,10 @@ function setBusy(change) {
   document.body.classList.toggle('is-busy', state.pendingOperations > 0);
 }
 
-function showToast(message, { tone = 'info', sticky = false } = {}) {
+function showToast(text, { tone = 'info', sticky = false } = {}) {
   const toast = document.createElement('div');
   toast.className = tone === 'error' ? 'toast toast--error' : 'toast';
-  toast.textContent = message;
+  toast.textContent = text;
   elements.toasts.append(toast);
 
   const dismiss = () => toast.remove();
@@ -178,10 +228,16 @@ function showToast(message, { tone = 'info', sticky = false } = {}) {
   return dismiss;
 }
 
+// For changes that are seen but not heard: a screen reader reads what is written here.
+function announce(text) {
+  elements.announcer.textContent = text;
+}
+
 // A dialog covers the toasts, so problems with its input are shown next to the fields.
 function showFieldErrors(form, errors) {
   for (const slot of form.querySelectorAll('[data-error-for]')) {
-    slot.textContent = errors[slot.dataset.errorFor] ?? '';
+    const problem = errors[slot.dataset.errorFor];
+    slot.textContent = problem ? t(problem) : '';
   }
 }
 
@@ -194,12 +250,68 @@ function clearErrorOnInput(form) {
   });
 }
 
+// Projects: their order
+
+// The list follows the hand at once; reading git again to confirm it comes after.
+async function moveProject(from, to) {
+  const projects = [...state.snapshot.projects];
+  const [project] = projects.splice(from, 1);
+  projects.splice(to, 0, project);
+  state.snapshot = { ...state.snapshot, projects };
+  render();
+  announce(t('project.moved', { name: project.name, position: to + 1, total: projects.length }));
+
+  state.pendingMoves += 1;
+  const result = await run(
+    async () => {
+      try {
+        return await api.moveProject(project.path, to);
+      } finally {
+        state.pendingMoves -= 1;
+      }
+    },
+    // While another move is on its way, this answer already shows an order that is gone.
+    { blocking: false, keepsSnapshot: () => state.pendingMoves === 0 },
+  );
+  // A refused move leaves the list showing an order that was never saved.
+  if (!result?.ok) await run(() => api.getState());
+}
+
+// Guided tour
+
+function startTour() {
+  // The tour is modal: whatever else is open closes.
+  for (const dialog of document.querySelectorAll('dialog[open]:not(.tour)')) dialog.close();
+  tour.start();
+}
+
+// The tour only starts on its own until it has been seen once, finished or not.
+async function rememberTourWasSeen() {
+  if (!state.snapshot || state.snapshot.settings.tourSeen) return;
+  await handlers.onChangeSettings({ tourSeen: true });
+}
+
+// Settings and Info dialogs
+
+function openInfoDialog() {
+  elements.infoNote.textContent = '';
+  elements.infoDialog.showModal();
+}
+
+async function copyVersions() {
+  if (!state.appInfo) return;
+
+  const lines = versionRows(state.appInfo, state.snapshot.environment).map(([name, version]) => `${name}: ${version}`);
+  await api.copyText(lines.join('\n'));
+  elements.infoNote.textContent = t('common.copied');
+}
+
 // Account dialog
 
 function openAccountDialog(account = null) {
   const form = elements.accountForm;
   state.editingAccountId = account?.id ?? null;
-  elements.accountDialogTitle.textContent = account ? 'Edit account' : 'Add account';
+  elements.accountDialogTitle.textContent = account ? t('accountDialog.edit') : t('accounts.add');
 
   form.reset();
   showFieldErrors(form, {});
@@ -266,17 +378,17 @@ async function generateSshKey() {
 
   const result = await api.generateSshKey({ label: form.elements.label.value, gitEmail: form.elements.gitEmail.value });
   if (!result.ok) {
-    showFieldErrors(form, result.errors ?? { sshKeyPath: result.error ?? 'Something went wrong. Try again.' });
+    showFieldErrors(form, result.errors ?? { sshKeyPath: result.error ?? UNEXPECTED_FAILURE });
     return;
   }
 
   showKeyPath(result.path);
-  showPublicKey(result.publicKey, 'Key created without a passphrase. Save the account to start using it.');
+  showPublicKey(result.publicKey, t('accountDialog.publicKey.created'));
 }
 
 async function copyPublicKey() {
   await api.copyText(elements.publicKeyText.value);
-  elements.publicKeyNote.textContent = 'Copied.';
+  elements.publicKeyNote.textContent = t('common.copied');
 }
 
 function clearSshKey() {
@@ -289,9 +401,7 @@ function clearSshKey() {
 function openOwnerDialog(account) {
   const form = elements.ownerForm;
   state.ownerRuleAccountId = account.id;
-  elements.ownerDialogIntro.textContent =
-    `Repositories whose remote belongs to this user or organization on github.com use "${account.label}", ` +
-    'wherever they are on disk and from the moment you clone them.';
+  elements.ownerDialogIntro.textContent = t('ownerDialog.intro', { account: account.label });
 
   form.reset();
   showFieldErrors(form, {});
@@ -310,18 +420,20 @@ async function submitOwnerRule(event) {
     result = { ok: false };
   }
   if (!result.ok) {
-    showFieldErrors(form, result.errors ?? { owner: result.error ?? 'Something went wrong. Try again.' });
+    showFieldErrors(form, result.errors ?? { owner: result.error ?? UNEXPECTED_FAILURE });
     return;
   }
 
-  state.snapshot = result.snapshot;
-  render();
+  applySnapshot(result.snapshot);
   elements.ownerDialog.close();
 }
 
 document.getElementById('add-account').addEventListener('click', () => openAccountDialog());
 document.getElementById('add-project').addEventListener('click', () => run(() => api.addProjects()));
 document.getElementById('refresh').addEventListener('click', () => run(() => api.getState()));
+document.getElementById('open-guide').addEventListener('click', startTour);
+document.getElementById('open-info').addEventListener('click', openInfoDialog);
+document.getElementById('open-settings').addEventListener('click', () => elements.settingsDialog.showModal());
 
 document.getElementById('cancel-account').addEventListener('click', () => elements.accountDialog.close());
 document.getElementById('pick-ssh-key').addEventListener('click', pickSshKey);
@@ -333,7 +445,22 @@ elements.accountForm.addEventListener('submit', submitAccount);
 document.getElementById('cancel-owner').addEventListener('click', () => elements.ownerDialog.close());
 elements.ownerForm.addEventListener('submit', submitOwnerRule);
 
+document.getElementById('close-settings').addEventListener('click', () => elements.settingsDialog.close());
+document.getElementById('close-info').addEventListener('click', () => elements.infoDialog.close());
+document.getElementById('copy-info').addEventListener('click', copyVersions);
+
 clearErrorOnInput(elements.accountForm);
 clearErrorOnInput(elements.ownerForm);
+makeReorderable(elements.projects, { rowSelector: '.project', onMove: moveProject });
 
-run(() => api.getState());
+async function start() {
+  const [info] = await Promise.all([api.getAppInfo().catch(() => ({ ok: false })), run(() => api.getState())]);
+  if (info.ok) {
+    state.appInfo = info.info;
+    render();
+  }
+  // The first time the app opens, the tour introduces it.
+  if (state.snapshot && !state.snapshot.settings.tourSeen) startTour();
+}
+
+start();

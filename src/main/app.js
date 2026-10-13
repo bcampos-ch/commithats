@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme } from 'electron';
+import { app, BrowserWindow, clipboard as systemClipboard, dialog, ipcMain, nativeTheme, session } from 'electron';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,35 +9,62 @@ import { createJsonStore } from '../adapters/json-store.js';
 import { createSshKeygen } from '../adapters/ssh-keygen.js';
 import { createAppService } from '../core/app-service.js';
 import { createGcm } from '../core/gcm.js';
+import { languageForLocale } from '../core/settings.js';
 import { registerIpc } from './ipc.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const RENDERER_ENTRY = path.join(here, '..', 'renderer', 'index.html');
 const PRELOAD_SCRIPT = path.join(here, 'preload.cjs');
+const APP_ICON = path.join(here, '..', 'assets', 'icon.png');
 const STATE_FILE = 'state.json';
 const ACCOUNT_FILES_DIR = 'accounts';
+// Named here instead of derived from the product name: the rules in the global git config
+// point into this folder, so renaming the product must never move it. It still carries the
+// name the app had before it was called Commit Hats.
+const DATA_FOLDER = 'git-account-switcher';
+// The ground color of each theme, so the window is never a white flash before the page paints.
+const GROUND = { dark: '#1a1514', light: '#f4ebea' };
+const SYSTEM_NAMES = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
+const { version: APP_VERSION } = createRequire(import.meta.url)('../../package.json');
 
 /**
  * Boots the app and resolves once the window has loaded.
  *
  * The options let a smoke run point the app at throwaway data, a throwaway SSH
- * folder and a stand-in credential manager. `npm start` uses the defaults: the
- * real git, the real Git Credential Manager and `~/.ssh`.
+ * folder, a stand-in credential manager and a stand-in clipboard, and pin the
+ * language it starts in. `npm start` uses the defaults: the real git, the real Git
+ * Credential Manager, `~/.ssh`, the system clipboard and the language of the system.
  */
 export async function startApp({
-  userDataDir = process.env.GIT_ACCOUNT_SWITCHER_DATA_DIR,
+  userDataDir = process.env.COMMITHATS_DATA_DIR,
   git = createGitCli({ env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }),
   gcm = createGcm(git),
   keygen = createSshKeygen(),
   sshDir = path.join(os.homedir(), '.ssh'),
+  clipboard = systemClipboard,
+  defaultLanguage,
   show = true,
 } = {}) {
   // Must run before the first await: Electron reads these settings when it becomes ready.
-  if (userDataDir) app.setPath('userData', path.resolve(userDataDir));
+  app.setPath('userData', userDataDir ? path.resolve(userDataDir) : path.join(app.getPath('appData'), DATA_FOLDER));
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return null;
   }
+
+  let mainWindow = null;
+
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+
+  // The language of the system is only known once Electron is ready.
+  await app.whenReady();
 
   const userData = app.getPath('userData');
   const service = createAppService({
@@ -48,11 +76,19 @@ export async function startApp({
     files: createFiles(),
     includeDir: path.join(userData, ACCOUNT_FILES_DIR),
     homeDir: os.homedir(),
+    defaultLanguage: defaultLanguage ?? languageForLocale(app.getLocale()),
   });
 
-  let mainWindow = null;
+  const groundColor = () => (nativeTheme.shouldUseDarkColors ? GROUND.dark : GROUND.light);
+
+  // The page follows `prefers-color-scheme`, and so do the title bar and the native dialogs.
+  function applyTheme(theme) {
+    nativeTheme.themeSource = theme;
+    mainWindow?.setBackgroundColor(groundColor());
+  }
 
   async function createWindow() {
+    const { language } = await service.getSettings();
     mainWindow = new BrowserWindow({
       width: 1080,
       height: 720,
@@ -60,8 +96,9 @@ export async function startApp({
       minHeight: 560,
       show: false,
       autoHideMenuBar: true,
-      title: 'Git Account Switcher',
-      backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1216' : '#f5f6f8',
+      title: 'Commit Hats',
+      icon: APP_ICON,
+      backgroundColor: groundColor(),
       webPreferences: {
         preload: PRELOAD_SCRIPT,
         contextIsolation: true,
@@ -83,24 +120,35 @@ export async function startApp({
       mainWindow = null;
     });
 
-    await mainWindow.loadFile(RENDERER_ENTRY);
+    // The page reads its language from its own address, so even its first paint is in that language.
+    await mainWindow.loadFile(RENDERER_ENTRY, { query: { lang: language } });
     return mainWindow;
   }
 
-  registerIpc({ ipcMain, dialog, clipboard, service, getWindow: () => mainWindow, homeDir: os.homedir() });
+  registerIpc({
+    ipcMain,
+    dialog,
+    clipboard,
+    service,
+    getWindow: () => mainWindow,
+    homeDir: os.homedir(),
+    appInfo: {
+      version: APP_VERSION,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      system: `${SYSTEM_NAMES[process.platform] ?? process.platform} ${os.release()} (${process.arch})`,
+      dataDir: userData,
+    },
+    onSettingsChanged: (settings) => applyTheme(settings.theme),
+  });
 
-  app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
-  });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  await app.whenReady();
+  // The page needs no browser permission (camera, location, notifications...), so every request is refused.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  applyTheme((await service.getSettings()).theme);
   return { window: await createWindow(), service };
 }

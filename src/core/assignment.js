@@ -1,3 +1,4 @@
+import { message } from './messages.js';
 import { sshCommandFor } from './ssh-command.js';
 
 /**
@@ -20,8 +21,8 @@ export function describeAssignment(inspection, accounts, sshOptions = {}) {
 }
 
 /**
- * Lists the reasons git would ignore the account a project uses.
- * `signedInAccounts` is null when the credential manager cannot be asked.
+ * Lists the reasons git would ignore the account a project uses, as messages
+ * (see messages.js). `signedInAccounts` is null when the credential manager cannot be asked.
  */
 export function collectWarnings(inspection, account, { signedInAccounts = null } = {}) {
   const warnings = [];
@@ -31,23 +32,13 @@ export function collectWarnings(inspection, account, { signedInAccounts = null }
     if (remote.transport === 'other') continue;
 
     if (!remote.isGithub) {
-      warnings.push(`Remote "${remote.name}" is not on github.com, so only the commit author changes for it.`);
+      warnings.push(message('warning.notGithub', { remote: remote.name }));
     } else if (remote.transport === 'ssh') {
-      if (!account.sshKeyPath) {
-        warnings.push(
-          `Remote "${remote.name}" uses SSH and this account has no SSH key, so pushes use your default key. ` +
-            'Add a key to the account or switch the remote to HTTPS.',
-        );
-      }
+      if (!account.sshKeyPath) warnings.push(message('warning.sshNoKey', { remote: remote.name }));
     } else if (remote.hasEmbeddedSecret) {
-      warnings.push(
-        `Remote "${remote.name}" has a credential embedded in its URL. Git uses it instead of the assigned account.`,
-      );
+      warnings.push(message('warning.embeddedCredential', { remote: remote.name }));
     } else if (remote.user !== null && !sameUser(remote.user, account.githubUser)) {
-      warnings.push(
-        `Remote "${remote.name}" is pinned to the user "${remote.user}" in its URL. ` +
-          'Git uses it instead of the assigned account.',
-      );
+      warnings.push(message('warning.pinnedUser', { remote: remote.name, user: remote.user }));
     } else {
       reliesOnSignIn = true;
     }
@@ -55,9 +46,7 @@ export function collectWarnings(inspection, account, { signedInAccounts = null }
 
   const isSignedIn = signedInAccounts?.some((name) => sameUser(name, account.githubUser));
   if (reliesOnSignIn && signedInAccounts !== null && !isSignedIn) {
-    warnings.push(
-      `You're not signed in as "${account.githubUser}" yet. Sign in from the Accounts panel before you push.`,
-    );
+    warnings.push(message('warning.notSignedIn', { user: account.githubUser }));
   }
   return warnings;
 }

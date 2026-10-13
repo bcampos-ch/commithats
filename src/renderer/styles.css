@@ -1,49 +1,82 @@
+/* ==========================================================================
+   Design tokens
+
+   The visual system is Tramo's, in its coral palette, with three rules:
+
+   1. Surfaces are separated by luminance, never by strokes. Every panel is a step
+      on the elevation ladder: ground, surface, raised, tile. An outline is only
+      drawn for focus.
+   2. One accent, used sparingly: the salmon of the logo. `warn` and `ok` are different
+      hues on purpose: accent means "look here", warn means "something needs attention",
+      and ok is kept for the one thing that is plainly fine, an account that is signed in.
+   3. The loudness lives in the type: the poster face shouts the titles. Shapes stay
+      soft, with rounded corners, soft shadows and grain on every surface.
+
+   `--accent` fills buttons and carries dark text, because white on this salmon is
+   hard to read. `--accent-ink` is the accent for text, dots and focus rings: the
+   same salmon on dark grounds, and a deeper coral on paper so it stays legible.
+   ========================================================================== */
+
 :root {
   color-scheme: light dark;
+  accent-color: var(--accent);
 
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-muted: #f0f2f5;
-  --border: #e1e4ea;
-  --border-strong: #c9ced8;
-  --text: #1b1f24;
-  --text-muted: #5c6673;
-  --accent: #2563eb;
-  --accent-contrast: #ffffff;
-  --accent-soft: #e8effd;
-  --success: #17803d;
-  --warning-bg: #fff6df;
-  --warning-border: #f1d391;
-  --warning-text: #7a5200;
-  --danger: #c62828;
-  --backdrop: rgb(15 18 22 / 45%);
+  /* Elevation ladder: paper. Warm, not white: a white sheet on a warm desk. */
+  --ground: #f4ebea;
+  --surface: #faf4f3;
+  --raised: #ffffff;
+  --tile: #eadedc;
 
-  --radius: 8px;
-  --radius-large: 12px;
+  --ink: #221a19;
+  --ink-muted: #635553;
+  --ink-dim: #736562;
+
+  --accent: #fd6c5b;
+  --on-accent: #23100d;
+  --accent-ink: #b6341f;
+  --warn: #8a5a0f;
+  --ok: #136843;
+
+  --noise: url("../assets/noise-light.png");
+  --noise-tile: 200px;
+  --shadow: 0 10px 15px -3px rgb(34 26 25 / 12%), 0 4px 6px -4px rgb(34 26 25 / 12%);
+
+  --radius-tile: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-pill: 32px;
+
+  /* Two voices: the poster face for titles, the system face for everything you read. */
+  --font-poster: "Bahnschrift", "Arial Narrow", "Helvetica Neue", sans-serif;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1216;
-    --surface: #171b21;
-    --surface-muted: #1e232b;
-    --border: #2a303a;
-    --border-strong: #3a4250;
-    --text: #e7eaef;
-    --text-muted: #9aa4b2;
-    --accent: #6ea8fe;
-    --accent-contrast: #0b1220;
-    --accent-soft: #1b2a44;
-    --success: #4ac26b;
-    --warning-bg: #2b2412;
-    --warning-border: #5c4a17;
-    --warning-text: #e8c468;
-    --danger: #ff7b72;
-    --backdrop: rgb(0 0 0 / 60%);
+    --ground: #1a1514;
+    --surface: #251f1d;
+    --raised: #302927;
+    --tile: #4b403f;
+
+    --ink: #f9f4f4;
+    --ink-muted: #b0a4a1;
+    --ink-dim: #a19592;
+
+    --accent-ink: #fd6c5b;
+    --warn: #e5a83c;
+    --ok: #5ee0a0;
+
+    --noise: url("../assets/noise-dark.png");
+    --shadow: 0 10px 15px -3px rgb(0 0 0 / 30%), 0 4px 6px -4px rgb(0 0 0 / 30%);
   }
 }
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
 
 * {
   box-sizing: border-box;
@@ -54,17 +87,36 @@
   display: none !important;
 }
 
+/* For words meant to be read aloud by a screen reader and not seen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 html,
 body {
   height: 100%;
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tile) transparent;
 }
 
 body {
   margin: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: var(--bg);
-  color: var(--text);
+  background-color: var(--ground);
+  background-image: var(--noise);
+  background-size: var(--noise-tile) var(--noise-tile);
+  color: var(--ink);
   font: 14px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -86,27 +138,93 @@ ul {
 }
 
 button,
-input,
-select {
+input {
+  border: 0;
   font: inherit;
   color: inherit;
 }
 
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button,
+.project {
+  transition:
+    background-color 150ms var(--ease),
+    color 150ms var(--ease),
+    opacity 150ms var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Focus rings are never removed. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-ink);
   outline-offset: 2px;
 }
 
-/* Top bar */
+::selection {
+  background-color: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+/* Grain is the first background layer of every surface. */
+.topbar,
+.panel,
+.account,
+.detail,
+.dialog,
+.tour__card,
+.toast {
+  background-image: var(--noise);
+  background-size: var(--noise-tile) var(--noise-tile);
+}
+
+/* Titles, in the poster voice. */
+.brand__name,
+.panel__head h2,
+.dialog h2,
+.tour__title,
+.empty__title {
+  font-family: var(--font-poster);
+  font-stretch: 75%;
+  font-weight: 700;
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+/* Small labels: quiet, wide and uppercase. */
+.field__label,
+.rules__caption,
+.detail__title,
+.facts dt {
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   Top bar: a floating pill
+   ========================================================================== */
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  margin: 12px 16px 0;
+  padding: 8px 10px 8px 16px;
+  border-radius: var(--radius-pill);
+  background-color: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .brand {
@@ -116,26 +234,13 @@ select {
 }
 
 .brand__mark {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   flex: none;
 }
 
-.brand__mark rect {
-  fill: var(--accent);
-}
-
-.brand__mark path {
-  fill: none;
-  stroke: var(--accent-contrast);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .brand__name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 24px;
 }
 
 .topbar__meta,
@@ -145,13 +250,26 @@ select {
   gap: 8px;
 }
 
-/* Layout */
+/* Only there to say that something is missing, which is rare. */
+.environment:empty {
+  display: none;
+}
+
+.topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ==========================================================================
+   Layout and panels: borderless by construction
+   ========================================================================== */
 
 .layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 16px;
-  padding: 16px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 16px 16px;
   min-height: 0;
 }
 
@@ -159,9 +277,8 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-large);
-  background: var(--surface);
+  border-radius: var(--radius-panel);
+  background-color: var(--surface);
   overflow: hidden;
 }
 
@@ -170,100 +287,107 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 16px 6px 20px;
 }
 
 .panel__head h2 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-size: 28px;
 }
 
-.panel__body,
-.detail {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
+/* The room at the top is where the line of a dragged project shows, above the first row. */
 .panel__body {
   flex: 1 1 auto;
   min-height: 0;
+  padding: 6px 8px 8px;
   overflow: hidden auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tile) transparent;
+}
+
+.panel__body > ul {
+  display: grid;
+  gap: 6px;
 }
 
 body.is-busy .layout {
   pointer-events: none;
 }
 
-/* Controls */
+/* ==========================================================================
+   Controls
+   ========================================================================== */
 
 .button {
   flex: none;
-  padding: 6px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  cursor: pointer;
+  padding: 8px 14px;
+  border-radius: var(--radius-tile);
+  background-color: var(--raised);
+  font-weight: 500;
 }
 
 .button:hover {
-  background: var(--surface-muted);
+  background-color: var(--tile);
 }
 
 .button--primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-weight: 600;
+  background-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .button--primary:hover {
-  background: var(--accent);
-  filter: brightness(1.08);
+  background-color: var(--accent);
+  opacity: 0.9;
 }
 
 .button--quiet {
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-muted);
+  background-color: transparent;
+  color: var(--ink-muted);
+}
+
+.button--quiet:hover {
+  background-color: var(--raised);
+  color: var(--ink);
 }
 
 .button--small {
-  padding: 3px 10px;
+  padding: 4px 10px;
   font-size: 12px;
+}
+
+/* Inside a raised card the next step of the ladder is the tile. */
+.account .button {
+  background-color: var(--tile);
+}
+
+.account .button:hover {
+  background-color: color-mix(in oklab, var(--ink) 14%, var(--tile));
 }
 
 .link-button {
   padding: 0;
-  border: 0;
   background: none;
-  color: var(--text-muted);
+  color: var(--ink-dim);
   font-size: 12px;
-  cursor: pointer;
 }
 
 .link-button:hover {
-  color: var(--text);
-  text-decoration: underline;
+  color: var(--ink);
 }
 
 .icon-button {
   width: 28px;
   height: 28px;
   flex: none;
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  background-color: transparent;
+  color: var(--ink-dim);
   font-size: 18px;
   line-height: 1;
-  cursor: pointer;
 }
 
 .icon-button:hover {
-  background: var(--surface-muted);
-  color: var(--danger);
+  background-color: color-mix(in oklab, var(--ink) 10%, transparent);
+  color: var(--ink);
 }
 
 .icon-button--small {
@@ -272,39 +396,152 @@ body.is-busy .layout {
   font-size: 15px;
 }
 
-.select,
 .field input {
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-tile);
+  background-color: var(--raised);
 }
 
-.select:disabled {
-  color: var(--text-muted);
-  background: var(--surface-muted);
+.field input::placeholder {
+  color: var(--ink-dim);
+}
+
+/* Dropdown: the app's own select. See dropdown.js. */
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+}
+
+.dropdown__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-tile);
+  background-color: var(--raised);
+  text-align: left;
+}
+
+.dropdown__trigger:hover:not(:disabled),
+.dropdown__trigger[aria-expanded="true"] {
+  background-color: var(--tile);
+}
+
+.dropdown__trigger:disabled {
+  color: var(--ink-dim);
+  opacity: 0.7;
+}
+
+.dropdown__value,
+.dropdown__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two sides of a small square, turned: a chevron. It flips while the list is open. */
+.dropdown__chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -3px 3px 0;
+  border-right: 1.5px solid var(--ink-dim);
+  border-bottom: 1.5px solid var(--ink-dim);
+  transform: rotate(45deg);
+  transition: transform 200ms var(--ease);
+}
+
+.dropdown__trigger[aria-expanded="true"] .dropdown__chevron {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+/* The list lives in the top layer. These rules also undo the browser's popover defaults. */
+.dropdown__list {
+  position: fixed;
+  inset: auto;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: 288px;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-tile);
+  overflow-y: auto;
+  background-color: var(--raised);
+  background-image: var(--noise);
+  background-size: var(--noise-tile) var(--noise-tile);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  scrollbar-width: thin;
+  scrollbar-color: var(--tile) transparent;
+  animation: menu-pop 120ms var(--ease);
+}
+
+/* Opening motion for a floating list: a state change, not a show. */
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+.dropdown__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 12px;
+  border-radius: var(--radius-tile);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.dropdown__option--active {
+  background-color: color-mix(in oklab, var(--ink) 7%, transparent);
+  color: var(--ink);
+}
+
+/* A check mark for the chosen option, drawn the same way as the chevron. */
+.dropdown__check {
+  flex: none;
+  width: 5px;
+  height: 9px;
+  margin: -2px 4px 0;
+  border-right: 1.5px solid var(--accent-ink);
+  border-bottom: 1.5px solid var(--accent-ink);
+  transform: rotate(45deg);
+  visibility: hidden;
+}
+
+.dropdown__option[aria-selected="true"] .dropdown__check {
+  visibility: visible;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-muted);
-  color: var(--text-muted);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background-color: var(--tile);
+  color: var(--ink-muted);
   font-size: 12px;
   white-space: nowrap;
 }
 
+/* Green all the way: the tint, the words and the dot. */
 .chip--ok {
-  color: var(--success);
-}
-
-.chip--problem {
-  background: var(--warning-bg);
-  color: var(--warning-text);
+  background-color: color-mix(in oklab, var(--ok) 16%, var(--raised));
+  color: var(--ok);
 }
 
 .chip--ok::before {
@@ -312,48 +549,78 @@ body.is-busy .layout {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: currentColor;
+  background-color: currentColor;
 }
 
-/* Empty states */
+.chip--problem {
+  background-color: color-mix(in oklab, var(--warn) 18%, var(--raised));
+  color: var(--warn);
+}
+
+/* ==========================================================================
+   Empty states
+   ========================================================================== */
 
 .empty {
   display: grid;
-  gap: 4px;
-  padding: 28px 20px;
+  gap: 8px;
+  padding: 32px 20px;
   text-align: center;
 }
 
 .empty__title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 24px;
 }
 
 .empty__body {
-  color: var(--text-muted);
+  color: var(--ink-muted);
 }
 
-/* Accounts */
+/* ==========================================================================
+   Accounts: raised cards on the surface
+   ========================================================================== */
 
 .account {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 2px 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 12px;
+  border-radius: var(--radius-card);
+  background-color: var(--raised);
 }
 
+/* A rounded tile with the account's own color, so two accounts never look alike. */
 .account__avatar {
   grid-row: span 2;
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: hsl(var(--avatar-hue, 220) 55% 45%);
-  color: #ffffff;
+  border-radius: var(--radius-tile);
+  background-color: var(--tile);
+  color: #1a1514;
   font-size: 13px;
   font-weight: 600;
+}
+
+.account__avatar[data-color="blue"] {
+  background-color: #3987e5;
+}
+
+.account__avatar[data-color="cyan"] {
+  background-color: #1ea5c4;
+}
+
+.account__avatar[data-color="yellow"] {
+  background-color: #c98500;
+}
+
+.account__avatar[data-color="magenta"] {
+  background-color: #d55181;
+}
+
+.account__avatar[data-color="violet"] {
+  background-color: #9085e9;
 }
 
 /* minmax(0, 1fr) lets long names and paths be cut instead of widening the card. */
@@ -370,7 +637,7 @@ body.is-busy .layout {
 .account__user,
 .account__author {
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--ink-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -380,8 +647,8 @@ body.is-busy .layout {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  margin-top: 6px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .account__footer:empty {
@@ -392,7 +659,7 @@ body.is-busy .layout {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 /* Rules of an account: the folders and the remote owners it is used for */
@@ -400,20 +667,19 @@ body.is-busy .layout {
 .rules {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 10px;
 }
 
-.rules__caption {
-  color: var(--text-muted);
-  font-size: 12px;
+.rules ul {
+  display: grid;
+  gap: 4px;
 }
 
 .rules__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 2px;
 }
 
 .rule {
@@ -421,6 +687,9 @@ body.is-busy .layout {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  padding: 2px 4px 2px 10px;
+  border-radius: var(--radius-tile);
+  background-color: var(--tile);
 }
 
 .rule__text {
@@ -432,7 +701,9 @@ body.is-busy .layout {
   white-space: nowrap;
 }
 
-/* Cut at the start for the same reason as project paths: the end tells folders apart. */
+/* A long path is cut at the start, because the end is the part that tells folders apart.
+   The right-to-left box moves the ellipsis to the left; the <bdi> inside keeps the text
+   itself left-to-right. */
 .rule__text--path {
   direction: rtl;
   text-align: left;
@@ -440,47 +711,132 @@ body.is-busy .layout {
 
 .stray {
   display: grid;
-  gap: 4px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--warning-bg);
-  color: var(--warning-text);
+  gap: 6px;
+  margin-top: 6px;
+  padding: 12px;
+  border-radius: var(--radius-card);
+  background-color: color-mix(in oklab, var(--warn) 12%, var(--raised));
 }
 
 .stray__title {
+  color: var(--warn);
   font-weight: 600;
 }
 
 .stray__body {
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
-/* Projects */
+/* ==========================================================================
+   Projects: rows that light up, never ruled lines
+   ========================================================================== */
 
 .project {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 190px auto;
+  grid-template-columns: auto minmax(0, 1fr) 200px auto;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 6px 0;
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid transparent;
+  gap: 4px 8px;
+  padding: 4px 8px 4px 6px;
+  border-radius: var(--radius-card);
 }
 
-.project--selected {
-  border-left-color: var(--accent);
-  background: var(--accent-soft);
+.project:hover {
+  background-color: color-mix(in oklab, var(--ink) 5%, transparent);
+}
+
+/* The handle a project is dragged by: six dots, drawn so that no font is needed. */
+.project__grip {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 32px;
+  border-radius: var(--radius-tile);
+  color: var(--ink-dim);
+  cursor: grab;
+  opacity: 0.45;
+  transition:
+    background-color 150ms var(--ease),
+    opacity 150ms var(--ease);
+}
+
+.project__grip::before {
+  content: "";
+  width: 8px;
+  height: 15px;
+  background-image: radial-gradient(circle, currentColor 1.1px, transparent 1.6px);
+  background-size: 4px 5px;
+}
+
+.project:hover .project__grip,
+.project__grip:focus-visible {
+  opacity: 1;
+}
+
+.project__grip:hover {
+  background-color: color-mix(in oklab, var(--ink) 10%, transparent);
+}
+
+.project__grip:active {
+  cursor: grabbing;
+}
+
+/* A list of one cannot be reordered: the handle keeps its room, so rows line up, and shows nothing. */
+.project__grip--idle {
+  visibility: hidden;
+}
+
+/* While a project is dragged: the row left behind fades, and a line in the gap between
+   two rows shows where it would land. See reorder.js. */
+.project.is-dragged {
+  opacity: 0.4;
+}
+
+.project.is-drop-before::before,
+.project.is-drop-after::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background-color: var(--accent-ink);
+  pointer-events: none;
+}
+
+.project.is-drop-before::before {
+  top: -4px;
+}
+
+.project.is-drop-after::after {
+  bottom: -4px;
+}
+
+/* The selected project sits on a quiet accent tint, with the grain as its first layer. */
+.project--selected,
+.project--selected:hover {
+  background-color: transparent;
+  background-image:
+    var(--noise),
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--accent) 16%, var(--surface)),
+      color-mix(in oklab, var(--accent) 24%, var(--surface))
+    );
+  background-size:
+    var(--noise-tile) var(--noise-tile),
+    auto;
 }
 
 .project__main {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 6px 13px;
-  border: 0;
+  padding: 8px 14px 8px 6px;
+  border-radius: var(--radius-card);
   background: none;
   text-align: left;
-  cursor: pointer;
 }
 
 .project__name {
@@ -496,18 +852,15 @@ body.is-busy .layout {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--warning-bg);
-  border: 1px solid var(--warning-border);
-  color: var(--warning-text);
+  background-color: var(--warn);
+  color: var(--surface);
   font-size: 11px;
   font-weight: 700;
 }
 
-/* A long path is cut at the start, because the end is the part that tells projects apart.
-   The right-to-left box moves the ellipsis to the left; the <bdi> inside keeps the text itself left-to-right. */
 .project__path {
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--ink-dim);
   font: 12px var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -515,40 +868,37 @@ body.is-busy .layout {
   text-align: left;
 }
 
-.project .select {
-  width: 100%;
-}
-
-/* Detail */
+/* ==========================================================================
+   Detail: a raised panel inside the projects panel
+   ========================================================================== */
 
 .detail {
   flex: none;
   max-height: 48%;
+  margin: 0 8px 8px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  background-color: var(--raised);
   overflow-y: auto;
-  padding: 14px 16px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-muted);
+  scrollbar-width: thin;
+  scrollbar-color: var(--tile) transparent;
   user-select: text;
 }
 
 .detail__title {
-  margin-bottom: 10px;
-  font-size: 13px;
-  font-weight: 600;
+  margin-bottom: 12px;
 }
 
 .detail__hint {
-  color: var(--text-muted);
+  color: var(--ink-muted);
 }
 
+/* The names take the room the longest one needs, whatever the language says them in. */
 .facts {
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
-  gap: 6px 12px;
-}
-
-.facts dt {
-  color: var(--text-muted);
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px 20px;
 }
 
 .facts dd {
@@ -568,11 +918,12 @@ body.is-busy .layout {
 }
 
 .facts__value--unset {
-  color: var(--text-muted);
+  color: var(--ink-dim);
 }
 
 .remote {
   display: flex;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
   width: 100%;
@@ -586,54 +937,88 @@ body.is-busy .layout {
 .warnings {
   display: grid;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .warning {
-  padding: 8px 10px;
-  border: 1px solid var(--warning-border);
-  border-radius: var(--radius);
-  background: var(--warning-bg);
-  color: var(--warning-text);
+  padding: 10px 12px;
+  border-radius: var(--radius-tile);
+  background-color: color-mix(in oklab, var(--warn) 14%, var(--raised));
+  color: var(--warn);
 }
 
 .detail__footnote {
-  margin-top: 12px;
-  color: var(--text-muted);
+  margin-top: 14px;
+  color: var(--ink-dim);
   font-size: 12px;
 }
 
-/* Dialog */
+/* ==========================================================================
+   Dialogs
+   ========================================================================== */
 
 .dialog {
   width: min(540px, calc(100vw - 32px));
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-large);
-  background: var(--surface);
-  color: var(--text);
+  padding: 24px;
+  border: 0;
+  border-radius: var(--radius-panel);
+  background-color: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
 }
 
 .dialog::backdrop {
-  background: var(--backdrop);
+  background-color: color-mix(in oklab, var(--ground) 60%, transparent);
+  backdrop-filter: blur(1px);
 }
 
 .dialog h2 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 30px;
+}
+
+/* Settings, Info and questions say little, so they take less room. */
+.dialog--narrow {
+  width: min(460px, calc(100vw - 32px));
 }
 
 .dialog__intro {
-  margin: 4px 0 16px;
-  color: var(--text-muted);
+  margin: 8px 0 18px;
+  color: var(--ink-muted);
+}
+
+.dialog__body {
+  margin-top: 18px;
+  user-select: text;
+}
+
+.dialog__body .dialog__note {
+  margin-top: 16px;
+}
+
+/* A question before something that is not undone with a click: what is asked, then what it does. */
+.dialog__question {
+  margin-top: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.dialog__detail {
+  margin-top: 8px;
+  color: var(--ink-muted);
+}
+
+/* A word about what a button of the dialog just did, at the far end of the row of buttons. */
+.dialog__status {
+  align-self: center;
+  margin-right: auto;
 }
 
 .field {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 14px;
 }
 
 .field-pair {
@@ -642,13 +1027,13 @@ body.is-busy .layout {
   gap: 0 12px;
 }
 
-.field__label {
-  font-weight: 600;
-}
-
 .field input {
   width: 100%;
   user-select: text;
+}
+
+.field input.field__mono {
+  font: 12px var(--font-mono);
 }
 
 .field__row {
@@ -662,12 +1047,17 @@ body.is-busy .layout {
 }
 
 .field__hint {
-  color: var(--text-muted);
+  color: var(--ink-dim);
   font-size: 12px;
 }
 
 .field__error {
-  color: var(--danger);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.field__note {
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
@@ -676,20 +1066,11 @@ body.is-busy .layout {
   display: none;
 }
 
-.field__note {
-  color: var(--success);
-  font-size: 12px;
-}
-
-.field input.field__mono {
-  font: 12px var(--font-mono);
-}
-
 .dialog__note {
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  background: var(--surface-muted);
-  color: var(--text-muted);
+  padding: 10px 12px;
+  border-radius: var(--radius-tile);
+  background-color: var(--raised);
+  color: var(--ink-muted);
   font-size: 12px;
 }
 
@@ -697,10 +1078,92 @@ body.is-busy .layout {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 22px;
+}
+
+/* ==========================================================================
+   Guided tour: a spotlight on what a step talks about, and a card next to it.
+   Ported from Tramo. See tour.js.
+   ========================================================================== */
+
+/* A see-through dialog as large as the window. Being modal is what keeps the page from being clicked. */
+.tour {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+}
+
+.tour::backdrop {
+  background: transparent;
+}
+
+/* The hole in the dark: its shadow, far larger than any screen, is what dims everything else. */
+.tour__spotlight {
+  position: fixed;
+  border-radius: var(--radius-card);
+  outline: 2px solid var(--accent-ink);
+  box-shadow: 0 0 0 200vmax color-mix(in oklab, var(--ground) 72%, transparent);
+  pointer-events: none;
+}
+
+/* A step with nothing to point at: no hole, so no outline either. */
+.tour__spotlight[data-hole="false"] {
+  outline-color: transparent;
+}
+
+.tour__card {
+  position: fixed;
+  width: min(19rem, calc(100vw - 2rem));
+  padding: 20px;
+  border-radius: var(--radius-panel);
+  background-color: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.tour__step {
+  animation: menu-pop 160ms var(--ease);
+}
+
+.tour__progress {
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tour__title {
+  margin-top: 8px;
+  font-size: 24px;
+}
+
+.tour__body {
+  margin-top: 8px;
+  color: var(--ink-muted);
+  line-height: 1.6;
+}
+
+.tour__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 20px;
 }
 
-/* Toasts */
+.tour__spacer {
+  flex: 1 1 auto;
+}
+
+/* ==========================================================================
+   Toasts
+   ========================================================================== */
 
 .toasts {
   position: fixed;
@@ -713,14 +1176,13 @@ body.is-busy .layout {
 }
 
 .toast {
-  padding: 10px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  padding: 12px 16px;
+  border-radius: var(--radius-card);
+  background-color: var(--tile);
+  box-shadow: var(--shadow);
   pointer-events: auto;
 }
 
 .toast--error {
-  border-color: var(--danger);
+  background-color: color-mix(in oklab, var(--warn) 22%, var(--tile));
 }

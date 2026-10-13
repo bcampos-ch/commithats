@@ -1,19 +1,49 @@
 {
-  "name": "git-account-switcher",
+  "name": "commithats",
   "version": "0.1.0",
-  "description": "Pick which GitHub account each local git project uses, without changing your global git config.",
+  "description": "Pick which GitHub account your local git projects commit and push as.",
   "private": true,
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "smoke": "electron scripts/smoke.js"
+    "smoke": "electron scripts/smoke.js",
+    "noise": "node scripts/build-noise.js",
+    "dist": "node scripts/clean-dist.js && electron-builder --win nsis --x64 && node scripts/checksums.js"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "electron": "^44.7.0"
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.commithats.app",
+    "productName": "Commit Hats",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "publish": null,
+    "win": {
+      "target": "nsis",
+      "icon": "src/assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "CommitHats-Setup-${version}.${ext}"
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true
+    }
   }
 }
