@@ -104,7 +104,7 @@ Building it uses two development tools, `electron` and `electron-builder`. At th
 Each release lists the SHA-256 of its installer. Compare it with the file you downloaded before you run it.
 
 ```powershell
-Get-FileHash ".\CommitHats-Setup-0.1.0.exe" -Algorithm SHA256
+Get-FileHash .\CommitHats-Setup-*.exe -Algorithm SHA256
 ```
 
 You can also build the installer yourself from the source:
