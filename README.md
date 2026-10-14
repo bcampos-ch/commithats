@@ -6,7 +6,10 @@
 
 Commit Hats for Git picks which account your local projects commit and push as: one project at a time, a whole folder at once, or by who owns the remote. Your global name, email, and credentials never change, and nothing has to keep running in the background.
 
-https://github.com/user-attachments/assets/e0680099-a516-41b3-bb02-c9441555d83a
+<picture>
+  <source srcset="docs/tour.avif" type="image/avif" />
+  <img src="docs/screenshot.png" alt="A tour of the app: choosing the account of a project, the rules by folder and by owner, and the warning before a push goes out with the wrong key." />
+</picture>
 
 ![The app with two accounts, their rules, and five projects](docs/screenshot.png)
 
