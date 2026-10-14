@@ -1,4 +1,4 @@
-<img src="src/assets/icon.png" width="96" alt="" />
+<img src="docs/banner.webp" alt="" />
 
 # Commit Hats
 
