@@ -97,7 +97,9 @@ In the packaged app, Electron is configured so that it cannot be used as a gener
 
 The app has no runtime dependencies. The installed program contains its own source and Electron, and nothing else from npm.
 
-Building it uses two development tools, `electron` and `electron-builder`. At the time of writing, `npm audit` reports no advisories for what ships in the app. It reports one advisory of moderate severity (GHSA-hp3w-g68c-fv3c, a denial of service in `sprintf-js`) in a library that `electron-builder` uses to download files during a build. That library is not part of the installed app.
+Building it uses two development tools, `electron` and `electron-builder`. Electron is listed as a development dependency, but it is what the installed app runs on, so its advisories apply to the app. `npm audit --omit=dev` leaves it out; read the full `npm audit` instead.
+
+At the time of writing, the app ships Electron 44.9.3, and `npm audit` reports no advisories for it. The advisories it does report (in `undici`, `fast-uri`, and `sprintf-js`) are in libraries that download Electron when you run `npm install` and that `electron-builder` uses during a build. None of them is part of the installed app.
 
 ## Verify a download
 
